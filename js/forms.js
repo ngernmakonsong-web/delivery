@@ -710,7 +710,66 @@ ACT['close-ok-save'] = async (el) => {
   closeSheet(true);
   render();
   toast('ปิดงานสำเร็จแล้ว', 'ok');
+  showNextStop();
 };
+
+/** หลังปิดงาน บอกเลยว่าร้านถัดไปคือที่ไหน ไกลแค่ไหน ใช้เวลาเท่าไร
+ *  คิดจากตำแหน่งที่ยืนอยู่ตอนนี้ ไม่ใช่จากร้านเดิม */
+async function showNextStop() {
+  const drvId = activeDriverId();
+  const open = jobsOfDay(S.date, drvId).filter((j) => !CLOSED[j.status]);
+  if (!open.length) {
+    setTimeout(() => {
+      openSheet(
+        sheetHead('จบงานวันนี้แล้ว', esc(dateLabel(S.date))) +
+        '<div class="empty"><div class="eico">🎉</div><h3>ปิดงานครบทุกร้านแล้ว</h3>' +
+        '<p>ตรวจยอดเงินที่ต้องนำส่งได้ที่หน้าสรุป</p></div>' +
+        '<button class="btn btn-pri btn-block" type="button" data-act="go-summary">ดูสรุปวันนี้</button>'
+      );
+    }, 700);
+    return;
+  }
+
+  const next = open[0];
+  const to = jobPoint(next);
+  if (!to) return;
+
+  setTimeout(async () => {
+    const from = S.pos || (await gpsOnce());
+    let lg = null;
+    if (from) {
+      try { lg = await Route.leg(from, to); } catch (e) { lg = null; }
+    }
+    const t = TY[next.type] || TY.deliver;
+    openSheet(
+      sheetHead('ไปร้านถัดไป', 'เหลืออีก ' + open.length + ' ร้าน') +
+      '<div class="card" style="padding:14px;margin-bottom:13px">' +
+        '<div style="font-weight:700;font-size:17px;line-height:1.35">' + esc(next.storeName || '') + '</div>' +
+        '<div class="muted" style="font-size:13px;margin-top:2px">' + t.label +
+          (next.seq ? ' · ลำดับที่ ' + next.seq : '') + '</div>' +
+        (lg
+          ? '<div style="display:flex;gap:16px;margin-top:12px">' +
+            '<div><div class="tile-k">ระยะทาง</div><div class="tile-v" style="font-size:20px">' +
+              Route.km(lg.distance) + '</div></div>' +
+            '<div><div class="tile-k">ใช้เวลา</div><div class="tile-v" style="font-size:20px">' +
+              Route.mins(lg.duration) + '</div></div>' +
+            '<div><div class="tile-k">ถึงประมาณ</div><div class="tile-v" style="font-size:20px">' +
+              Route.eta(lg.duration) + '</div></div>' +
+            '</div>' +
+            (lg.estimated ? '<div class="f-hint" style="margin-top:8px">ค่าประมาณ เรียกข้อมูลถนนไม่ได้ชั่วคราว</div>' : '')
+          : '<div class="f-hint" style="margin-top:10px">คำนวณเส้นทางไม่ได้ ตรวจสัญญาณอินเทอร์เน็ต</div>') +
+      '</div>' +
+      '<a class="btn btn-pri btn-block" style="margin-bottom:8px" href="' + esc(navUrl(to.lat, to.lng)) +
+        '" target="_blank" rel="noopener">' + ICO.nav + ' เปิดนำทาง</a>' +
+      '<button class="btn btn-block" style="margin-bottom:8px" type="button" data-act="job-st" ' +
+        'data-id="' + esc(next.id) + '" data-st="enroute">' + ICO.truck + ' เริ่มเดินทางไปร้านนี้</button>' +
+      '<button class="btn btn-ghost btn-block" type="button" data-act="sheet-close">ไว้ก่อน</button>'
+    );
+    refreshPlan(true);
+  }, 700);
+}
+
+ACT['go-summary'] = () => { closeSheet(true); go(S.mode === 'driver' ? 'summary' : 'reports'); };
 
 /* ======================= ปิดงานไม่สำเร็จ ======================= */
 
@@ -836,6 +895,7 @@ ACT['close-fail-save'] = async (el) => {
   closeSheet(true);
   render();
   toast(resch ? 'บันทึกแล้ว สร้างงานรอบใหม่วันที่ ' + thDate(resch) : 'บันทึกการปิดงานไม่สำเร็จแล้ว', 'ok');
+  showNextStop();
 };
 
 /* ======================= สร้างงานรับเช็คจากงานวางบิล ======================= */
@@ -1155,8 +1215,8 @@ async function swapSeq(id, dir) {
   render();
 }
 
-ACT['job-up'] = (el) => swapSeq(el.dataset.id, -1);
-ACT['job-down'] = (el) => swapSeq(el.dataset.id, 1);
+ACT['job-up'] = async (el) => { await swapSeq(el.dataset.id, -1); refreshPlan(true); };
+ACT['job-down'] = async (el) => { await swapSeq(el.dataset.id, 1); refreshPlan(true); };
 
 ACT['route-suggest'] = async () => {
   const drvId = activeDriverId();
@@ -1179,27 +1239,46 @@ ACT['route-suggest'] = async () => {
 
   if (pinned.length < 2) { toast('ร้านที่ปักหมุดไว้ยังน้อยเกินไป ลองปักหมุดร้านเพิ่มก่อน', 'bad', 4000); return; }
 
-  // เพื่อนบ้านใกล้สุด เริ่มจากตำแหน่งปัจจุบัน (ถ้าไม่มีให้เริ่มจากร้านแรก)
-  const rest = pinned.slice();
-  const order = [];
-  let cur = from || rest[0].p;
-  while (rest.length) {
-    let bi = 0, bd = Infinity;
-    rest.forEach((x, i) => {
-      const d = distKm(cur, x.p);
-      if (d !== null && d < bd) { bd = d; bi = i; }
-    });
-    const pick = rest.splice(bi, 1)[0];
-    order.push(pick.j);
-    cur = pick.p;
+  let order = null;
+  let byRoad = false;
+
+  // ลองจัดลำดับจากระยะทางถนนจริงก่อน แม่นกว่าเส้นตรงมาก
+  if (from && pinned.length <= 11) {
+    toast('กำลังคำนวณเส้นทางจริงบนถนน...', '', 9000);
+    const pts = [from].concat(pinned.map((x) => x.p));
+    const opt = await Route.optimize(pts);
+    if (opt && opt.order) {
+      // ดัชนี 0 คือตำแหน่งเราเอง ตัดออก แล้วเลื่อนดัชนีกลับ
+      order = opt.order.filter((i) => i > 0).map((i) => pinned[i - 1].j);
+      byRoad = true;
+    }
+  }
+
+  // ถ้าใช้ถนนจริงไม่ได้ ถอยไปใช้เพื่อนบ้านใกล้สุดแบบเส้นตรง
+  if (!order) {
+    const rest = pinned.slice();
+    order = [];
+    let cur = from || rest[0].p;
+    while (rest.length) {
+      let bi = 0, bd = Infinity;
+      rest.forEach((x, i) => {
+        const d = distKm(cur, x.p);
+        if (d !== null && d < bd) { bd = d; bi = i; }
+      });
+      const pick = rest.splice(bi, 1)[0];
+      order.push(pick.j);
+      cur = pick.p;
+    }
   }
 
   const closed = all.filter((j) => CLOSED[j.status]);
   await reseq(closed.concat(order, unpinned));
   await reload();
   render();
-  toast('จัดลำดับแนะนำให้แล้ว ปรับเองได้ด้วยปุ่มลูกศร' +
-    (unpinned.length ? ' (' + unpinned.length + ' ร้านไม่มีหมุด ต่อท้ายไว้)' : ''), 'ok', 4200);
+  refreshPlan(true);
+  toast((byRoad ? 'จัดลำดับจากระยะทางถนนจริงแล้ว' : 'จัดลำดับจากระยะเส้นตรงแล้ว (เรียกข้อมูลถนนไม่ได้)') +
+    ' ปรับเองได้ด้วยปุ่มลูกศร' +
+    (unpinned.length ? ' · ' + unpinned.length + ' ร้านไม่มีหมุด ต่อท้ายไว้' : ''), 'ok', 5000);
 };
 
 /* ======================= ฟอร์มร้านค้า ======================= */

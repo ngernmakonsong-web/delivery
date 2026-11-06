@@ -4,7 +4,7 @@
    ข้อมูลงานทั้งหมดอยู่ใน IndexedDB ไม่เกี่ยวกับแคชนี้
    =========================================================== */
 
-const CACHE = 'delivery-v20';
+const CACHE = 'delivery-v21';
 
 const SHELL = [
   './',
@@ -17,6 +17,7 @@ const SHELL = [
   './js/auth.js',
   './js/views.js',
   './js/forms.js',
+  './js/route.js',
   './js/map.js',
   './manifest.webmanifest',
   './icons/icon-192.png',

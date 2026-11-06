@@ -84,6 +84,7 @@ function jobCard(j, opts) {
   const name = j.storeName || (st && st.name) || 'ไม่ระบุร้าน';
   const sub = jobSummaryLine(j) || (st && st.address) || '';
   const amt = jobAmount(j);
+  const lg = legOf(j.id);
   const d = (S.pos && st && st.lat !== undefined && st.lat !== null)
     ? distKm(S.pos, { lat: st.lat, lng: st.lng }) : null;
   const drv = opts.showDriver ? driverById(j.driverId) : null;
@@ -105,7 +106,10 @@ function jobCard(j, opts) {
         (reviewOf(j) === 'passed' ? '<span class="chip st-done">ตรวจผ่าน</span>' : '') +
         (j.cod && j.cod.on ? '<span class="job-cod">เก็บเงิน ' + money(j.cod.expected) + '</span>' : '') +
         (drv ? '<span class="chip">' + esc(drv.name) + '</span>' : '') +
-        (d !== null ? '<span class="chip">' + distLabel(d) + '</span>' : '') +
+        (lg
+          ? '<span class="chip ty-cheque">' + Route.km(lg.distance) + ' · ' + Route.mins(lg.duration) +
+            (lg.estimated ? ' โดยประมาณ' : '') + '</span>'
+          : (d !== null ? '<span class="chip">' + distLabel(d) + '</span>' : '')) +
         (amt ? '<span class="job-amt tnum">' + money(amt) + '</span>' : '') +
       '</div>' +
     '</div>' +
@@ -116,6 +120,68 @@ function jobCard(j, opts) {
         '</div>'
       : '') +
     '</div>';
+}
+
+/** สรุปเส้นทางที่เหลือของวันนี้ ระยะรวมและเวลารวม */
+function routeSummary() {
+  const p = S.plan;
+  const drvId = activeDriverId();
+  const open = jobsOfDay(S.date, drvId).filter((j) => !CLOSED[j.status]);
+  if (!open.length) return '';
+
+  const noPin = open.filter((j) => !jobPoint(j)).length;
+
+  if (!p || !p.total) {
+    return '<div class="sec"><div class="card" style="padding:12px 13px">' +
+      '<div style="display:flex;align-items:center;gap:9px">' +
+      '<span class="spin" style="border-color:var(--line);border-top-color:var(--brand);width:16px;height:16px"></span>' +
+      '<span class="muted" style="font-size:13px">กำลังคำนวณเส้นทาง...</span></div>' +
+      (noPin ? '<div class="f-hint" style="color:var(--accent);margin-top:7px">มี ' + noPin +
+        ' ร้านยังไม่ได้ปักหมุด จึงคิดเส้นทางให้ไม่ได้</div>' : '') +
+      '</div></div>';
+  }
+
+  const next = p.firstJobId ? jobById(p.firstJobId) : null;
+  const nextLeg = next ? legOf(next.id) : null;
+
+  let h = '<div class="sec"><div class="card" style="padding:13px">';
+
+  if (next && nextLeg) {
+    h += '<div class="sec-t" style="margin-bottom:6px">ร้านถัดไป</div>' +
+      '<div style="display:flex;align-items:center;gap:10px;margin-bottom:11px">' +
+        '<div style="flex:1;min-width:0">' +
+          '<div style="font-weight:700;font-size:15.5px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">' +
+            esc(next.storeName || '') + '</div>' +
+          '<div class="muted" style="font-size:12.5px">' +
+            Route.km(nextLeg.distance) + ' · ใช้เวลา ' + Route.mins(nextLeg.duration) +
+            ' · ถึงประมาณ ' + Route.eta(nextLeg.duration) + ' น.</div>' +
+        '</div>' +
+        (jobPoint(next)
+          ? '<a class="btn btn-sm btn-pri" href="' + esc(navUrl(jobPoint(next).lat, jobPoint(next).lng)) +
+            '" target="_blank" rel="noopener">' + ICO.nav + ' นำทาง</a>'
+          : '') +
+      '</div>';
+  }
+
+  h += '<div class="pbar" style="margin-bottom:9px"><i class="pb-done" style="width:100%"></i></div>' +
+    '<div style="display:flex;gap:14px;font-size:13px">' +
+      '<div><span class="muted">ระยะที่เหลือ</span> <b>' + Route.km(p.total.distance) + '</b></div>' +
+      '<div><span class="muted">เวลาขับรวม</span> <b>' + Route.mins(p.total.duration) + '</b></div>' +
+    '</div>';
+
+  if (p.estimated) {
+    h += '<div class="f-hint" style="margin-top:7px">ตัวเลขนี้เป็นค่าประมาณ เพราะเรียกข้อมูลถนนไม่ได้ชั่วคราว</div>';
+  }
+  if (noPin) {
+    h += '<div class="f-hint" style="color:var(--accent);margin-top:7px">ยังไม่ได้ปักหมุด ' + noPin +
+      ' ร้าน จึงไม่ถูกนับในเส้นทาง</div>';
+  }
+  if (!p.fromMe) {
+    h += '<div class="f-hint" style="margin-top:7px">ยังไม่ได้ตำแหน่งปัจจุบัน จึงเริ่มนับจากร้านแรกแทน</div>';
+  }
+
+  h += '</div></div>';
+  return h;
 }
 
 /** ป้ายบอกว่าตอนนี้อยู่ขั้นที่เท่าไรของงาน */
@@ -157,6 +223,8 @@ Views.jobs = function () {
     h += emptyBlock('🚚', 'ยังไม่มีงานในวันนี้',
       'กดปุ่มส้มมุมล่างขวาเพื่อเพิ่มงาน<br>หรือสลับไปมุมมองออฟฟิศเพื่อจัดงานหลายรายการ');
   } else {
+    h += routeSummary();
+
     if (open.length) {
       h += '<div class="sec"><div class="sec-h">' +
         '<span class="sec-t">ยังไม่ปิดงาน ' + open.length + ' ร้าน</span>' +

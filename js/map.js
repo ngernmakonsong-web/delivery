@@ -115,6 +115,7 @@ const MapView = (function () {
     if (!el) return;
     const st = storeById(j.storeId);
     const t = TY[j.type] || TY.deliver;
+    const lg = legOf(j.id);
     const d = (S.pos && st) ? distKm(S.pos, { lat: st.lat, lng: st.lng }) : null;
     el.className = 'map-card';
     el.innerHTML =
@@ -122,7 +123,8 @@ const MapView = (function () {
         '<div style="flex:1;min-width:0">' +
           '<div style="font-weight:700;font-size:15.5px;line-height:1.35">' + esc(j.storeName || (st && st.name) || '-') + '</div>' +
           '<div class="muted" style="font-size:12.5px">' + (j.seq ? 'ลำดับ ' + j.seq + ' · ' : '') + t.label +
-          (d !== null ? ' · ห่าง ' + distLabel(d) : '') + '</div>' +
+          (lg ? ' · ' + Route.km(lg.distance) + ' · ' + Route.mins(lg.duration)
+              : (d !== null ? ' · ห่าง ' + distLabel(d) : '')) + '</div>' +
         '</div>' +
         '<button class="sh-close" type="button" data-act="map-card-close" aria-label="ปิด">' + ICO.x + '</button>' +
       '</div>' +
@@ -154,6 +156,7 @@ const MapView = (function () {
   }
 
   let drvLayer = null;
+  let routeLine = null;
 
   /** หมุดรถคันอื่น ๆ ให้ออฟฟิศเห็นว่าแต่ละคันอยู่ไหนตอนนี้ */
   function drawDrivers() {
@@ -181,6 +184,23 @@ const MapView = (function () {
         '<br>' + (mins < 1 ? 'เมื่อสักครู่' : mins + ' นาทีที่แล้ว'), { direction: 'top' });
       m.addTo(drvLayer);
     });
+  }
+
+  /** เส้นทางจริงบนถนน ตามแผนของวันนี้ */
+  function drawRoute() {
+    if (!map) return;
+    if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
+    const p = S.plan;
+    if (!p || !p.geometry || p.geometry.length < 2) return;
+    routeLine = L.layerGroup([
+      L.polyline(p.geometry, { color: '#ffffff', weight: 9, opacity: 0.85, lineJoin: 'round' }),
+      L.polyline(p.geometry, {
+        color: p.estimated ? '#9ca3af' : '#1a73e8',
+        weight: 5, opacity: 0.95, lineJoin: 'round',
+        dashArray: p.estimated ? '9 8' : null
+      })
+    ]).addTo(map);
+    routeLine.eachLayer((l) => l.bringToBack());
   }
 
   function drawMe() {
@@ -218,6 +238,7 @@ const MapView = (function () {
     L.control.zoom({ position: 'topright' }).addTo(map);
 
     didFit = false;
+    drawRoute();
     drawJobs();
     drawDrivers();
     drawMe();
@@ -232,7 +253,8 @@ const MapView = (function () {
 
   function teardown() {
     if (map) { map.remove(); map = null; }
-    layerJobs = null; meMarker = null; meCircle = null; base = null; drvLayer = null; didFit = false;
+    layerJobs = null; meMarker = null; meCircle = null; base = null;
+    drvLayer = null; routeLine = null; didFit = false;
   }
 
   function setBase(kind) {
@@ -249,6 +271,7 @@ const MapView = (function () {
 
   function refresh() {
     if (!map) return;
+    drawRoute();
     drawJobs();
     drawDrivers();
     drawMe();

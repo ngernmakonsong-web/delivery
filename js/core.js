@@ -277,6 +277,7 @@ const S = {
   search: '',
   ready: false,
   transfers: [],          // คำขอย้ายงานที่ยังค้าง
+  plan: null,             // แผนเส้นทางของวัน (ระยะ เวลา และเส้นสำหรับวาดแผนที่)
   cloud: false,           // ต่อเซิร์ฟเวอร์กลางอยู่หรือไม่
   me: null,               // โปรไฟล์ของคนที่ล็อกอิน
   role: 'admin',          // driver | office | admin
@@ -343,6 +344,81 @@ async function reloadTransfers() {
   catch (e) { S.transfers = []; }
 }
 
+/* ======================= แผนเส้นทางของวัน ======================= */
+
+/** จุดแวะของงาน (ตำแหน่งร้าน) */
+function jobPoint(j) {
+  const st = storeById(j.storeId);
+  if (!st || st.lat === undefined || st.lat === null) return null;
+  return { lat: st.lat, lng: st.lng };
+}
+
+/**
+ * คำนวณเส้นทางของงานที่ยังไม่ปิด เรียงตามลำดับที่ตั้งไว้
+ * เริ่มจากตำแหน่งปัจจุบันถ้ามี เก็บผลไว้ใน S.plan ให้หน้าจอใช้ร่วมกัน
+ */
+async function computePlan() {
+  const drvId = activeDriverId();
+  const open = jobsOfDay(S.date, drvId).filter((j) => !CLOSED[j.status]);
+  const stops = [];
+  open.forEach((j) => {
+    const p = jobPoint(j);
+    if (p) stops.push({ jobId: j.id, p: p });
+  });
+
+  if (!stops.length) { S.plan = null; return null; }
+
+  const pts = [];
+  const startFromMe = !!S.pos;
+  if (startFromMe) pts.push({ lat: S.pos.lat, lng: S.pos.lng });
+  stops.forEach((s) => pts.push(s.p));
+
+  if (pts.length < 2) { S.plan = null; return null; }
+
+  const r = await Route.plan(pts);
+  if (!r) { S.plan = null; return null; }
+
+  // จับคู่ช่วงเส้นทางกับงานปลายทางของช่วงนั้น
+  const byJob = {};
+  stops.forEach((s, i) => {
+    const legIndex = startFromMe ? i : i - 1;
+    if (legIndex >= 0 && r.legs[legIndex]) byJob[s.jobId] = r.legs[legIndex];
+  });
+
+  S.plan = {
+    date: S.date,
+    driverId: drvId,
+    byJob: byJob,
+    geometry: r.geometry,
+    total: r.total,
+    estimated: r.estimated,
+    fromMe: startFromMe,
+    firstJobId: stops.length ? stops[0].jobId : null,
+    at: Date.now()
+  };
+  return S.plan;
+}
+
+/** ข้อมูลเส้นทางของงานหนึ่ง (ระยะและเวลาจากจุดก่อนหน้า) */
+function legOf(jobId) {
+  return (S.plan && S.plan.byJob && S.plan.byJob[jobId]) || null;
+}
+
+/** คำนวณเส้นทางใหม่แล้ววาดหน้าจอซ้ำ เรียกได้บ่อยไม่เปลือง เพราะมีแคช */
+let _planT = null;
+function refreshPlan(force) {
+  clearTimeout(_planT);
+  _planT = setTimeout(async () => {
+    const before = JSON.stringify(S.plan && S.plan.total);
+    await computePlan();
+    const after = JSON.stringify(S.plan && S.plan.total);
+    if (force || before !== after) {
+      if (!sheetOpen()) render();
+      else if (S.screen === 'map' && typeof MapView !== 'undefined') MapView.refresh();
+    }
+  }, 350);
+}
+
 /** คำขอที่รอ "เรา" ตัดสินใจ ใช้ขึ้นป้ายแจ้งเตือน */
 function transfersForMe() {
   return (S.transfers || []).filter((t) =>
@@ -353,6 +429,7 @@ function transfersForMe() {
 
 let _watchId = null;
 let _wakeLock = null;
+let prevPos = null;
 
 function setGps(state) {
   S.gps = state;
@@ -374,8 +451,11 @@ function gpsStart() {
         acc: p.coords.accuracy,
         at: new Date().toISOString()
       };
+      const moved = !prevPos || (distKm(prevPos, S.pos) || 0) > 0.15;
+      prevPos = S.pos;
       setGps('on');
       if (typeof MapView !== 'undefined' && MapView.onPos) MapView.onPos(S.pos);
+      if (moved && S.ready && typeof Route !== 'undefined') refreshPlan();
       // ส่งตำแหน่งขึ้นเซิร์ฟเวอร์ให้ออฟฟิศเห็น (ตัวเชื่อมจำกัดไว้นาทีละครั้ง)
       if (S.cloud && typeof Cloud !== 'undefined') Cloud.pushPosition(S.pos);
     },
@@ -965,6 +1045,7 @@ async function startApp() {
   S.ready = true;
   gpsStart();
   await render();
+  if (typeof Route !== 'undefined') refreshPlan(true);
 
   // รวบการเปลี่ยนแปลงหลายครั้งติด ๆ กันให้วาดใหม่รอบเดียว
   let chgT = null;
@@ -974,6 +1055,7 @@ async function startApp() {
       try { await reload(); } catch (e) { return; }
       if (!sheetOpen()) render();
       else if (S.screen === 'map' && typeof MapView !== 'undefined') MapView.refresh();
+      if (typeof Route !== 'undefined') refreshPlan();
     }, 250);
   });
 }
