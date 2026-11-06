@@ -12,6 +12,6 @@
    =========================================================== */
 
 window.APP_CONFIG = {
-  SUPABASE_URL: '',
-  SUPABASE_ANON_KEY: ''
+  SUPABASE_URL: 'https://wopgcutgbfojkklayiqg.supabase.co',
+  SUPABASE_ANON_KEY: 'sb_publishable_76i31g4zCB0rndQ8_kkdEw_K2_Dshpr'
 };
