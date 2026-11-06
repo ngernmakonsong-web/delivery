@@ -446,7 +446,9 @@ button{ cursor:pointer; border:0; background:none; -webkit-tap-highlight-color:t
 }
 .f-lab .opt{ font-weight:500; color:var(--ink-4) }
 .f input[type=text], .f input[type=tel], .f input[type=number],
-.f input[type=date], .f input[type=time], .f select, .f textarea{
+.f input[type=date], .f input[type=time], .f input[type=password],
+.f input[type=email], .f input[type=search], .f input:not([type]),
+.f select, .f textarea{
   width:100%;
   min-height:46px; padding:10px 12px;
   border:1px solid var(--line);
