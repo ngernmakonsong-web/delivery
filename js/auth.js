@@ -124,6 +124,37 @@ ACT['signup-first'] = async () => {
   }
 };
 
+/** เมนูบัญชีที่เปิดจากไอคอนมุมขวาบน */
+ACT['account-menu'] = () => {
+  if (!S.cloud) {
+    toast('โหมดนี้ยังไม่ได้ต่อเซิร์ฟเวอร์ จึงไม่มีระบบเข้าออก', '', 3000);
+    return;
+  }
+  const p = S.me;
+  if (!p) { renderLogin(); return; }
+  const role = ({ driver: 'คนขับ', office: 'ออฟฟิศ / CS', admin: 'ผู้ดูแล' })[p.role] || p.role;
+
+  let h = sheetHead(p.name, p.username + ' · ' + role);
+
+  h += '<div class="dl">' +
+    '<div class="dl-r"><div class="dl-k">ชื่อผู้ใช้</div><div class="dl-v mono">' + esc(p.username) + '</div></div>' +
+    '<div class="dl-r"><div class="dl-k">สิทธิ์</div><div class="dl-v">' + esc(role) + '</div></div>' +
+    (p.vehicle ? '<div class="dl-r"><div class="dl-k">ทะเบียนรถ</div><div class="dl-v">' + esc(p.vehicle) + '</div></div>' : '') +
+    '</div>';
+
+  h += '<div class="actions">' +
+    '<button class="btn btn-block" type="button" data-act="passwd">เปลี่ยนรหัสผ่านของฉัน</button>' +
+    (canSeeOffice()
+      ? '<button class="btn btn-block" type="button" data-act="users-open">จัดการบัญชีผู้ใช้</button>' : '') +
+    '<button class="btn btn-danger btn-block" type="button" data-act="logout">' +
+    '<svg viewBox="0 0 24 24" width="18" height="18" fill="none" stroke="currentColor" stroke-width="2" ' +
+    'stroke-linecap="round" stroke-linejoin="round"><path d="M15 17l5-5-5-5M20 12H9M11 3H5a1 1 0 00-1 1v16a1 1 0 001 1h6"/></svg>' +
+    ' ออกจากระบบ</button>' +
+    '</div>';
+
+  openSheet(h);
+};
+
 ACT['logout'] = () => {
   confirmSheet('ออกจากระบบ?', 'งานที่บันทึกไว้แล้วอยู่บนเซิร์ฟเวอร์ ไม่หายไปไหน', 'ออกจากระบบ', false, async () => {
     await Cloud.signOut();

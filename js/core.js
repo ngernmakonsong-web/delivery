@@ -579,12 +579,24 @@ function renderNav() {
 
 function renderTopbar() {
   const btnMode = document.getElementById('btnMode');
+
+  // ไอคอนบัญชีมุมขวาบน กดแล้วเจอปุ่มออกจากระบบ
+  const btnUser = document.getElementById('btnUser');
+  if (btnUser) {
+    if (S.cloud && S.me) {
+      btnUser.classList.remove('hidden');
+      document.getElementById('userInitials').textContent = initials(S.me.name);
+      btnUser.title = S.me.name + ' · แตะเพื่อออกจากระบบ';
+    } else {
+      btnUser.classList.add('hidden');
+    }
+  }
   document.getElementById('modeLabel').textContent = S.mode === 'driver' ? 'คนขับ' : 'ออฟฟิศ';
   document.getElementById('dateLabel').textContent = dateLabel(S.date);
 
   // คนขับสลับไปมุมมองออฟฟิศไม่ได้ ปุ่มกลายเป็นชื่อตัวเองที่กดดูบัญชีได้
   if (!canSeeOffice()) {
-    btnMode.dataset.act = 'users-open';
+    btnMode.dataset.act = 'account-menu';
     document.getElementById('modeLabel').textContent = S.me ? S.me.name : 'คนขับ';
   } else {
     btnMode.dataset.act = 'mode';
@@ -608,7 +620,6 @@ function renderTopbar() {
     html += trChip;
     if (S.me && S.me.vehicle) html += '<span class="dchip">' + esc(S.me.vehicle) + '</span>';
     if (canSeeOffice()) html += '<button class="dchip add" type="button" data-act="mode">ไปมุมมองออฟฟิศ</button>';
-    html += '<button class="dchip add" type="button" data-act="users-open">บัญชีของฉัน</button>';
     strip.innerHTML = html;
     return;
   }
@@ -819,6 +830,7 @@ async function boot() {
   document.getElementById('btnDateNext').dataset.act = 'date-next';
   document.getElementById('btnDate').dataset.act = 'date-pick';
   document.getElementById('btnGps').dataset.act = 'gps-info';
+  document.getElementById('btnUser').dataset.act = 'account-menu';
   document.getElementById('sheetBackdrop').dataset.act = 'sheet-close';
 
   history.pushState(null, '', location.href);
