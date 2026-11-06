@@ -784,3 +784,7 @@ body.auth-mode #screen{ padding:0; min-height:100vh }
   #sheet{ bottom:0 }
   .tiles{ gap:11px }
 }
+
+/* ป้ายคำขอย้ายงานบนแถบด้านบน */
+.dchip.tr{ background:var(--accent); color:#fff; font-weight:700 }
+.dchip.tr .dcount{ background:rgba(0,0,0,.22) }

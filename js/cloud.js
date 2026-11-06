@@ -395,6 +395,57 @@
     async count() { return (await drivers.all()).length; }
   };
 
+  /* ---------- คำขอย้ายงาน ---------- */
+
+  const transfers = {
+    /** คำขอที่ยังค้างอยู่ซึ่งเกี่ยวข้องกับเรา (กฎสิทธิ์กรองให้แล้ว) */
+    async pending() {
+      const { data, error } = await withRetry(() => sb.from('job_transfers')
+        .select('*').eq('status', 'pending').order('created_at', { ascending: false }));
+      if (error) { console.error(error); return []; }
+      return (data || []).map((r) => ({
+        id: r.id, jobId: r.job_id, fromDriver: r.from_driver, toDriver: r.to_driver,
+        status: r.status, note: r.note, createdAt: r.created_at
+      }));
+    },
+
+    /** คนขับขอย้ายงานให้คนอื่น */
+    async request(jobId, toDriver, note) {
+      if (!me) throw new Error('ยังไม่ได้เข้าระบบ');
+      const { error } = await sb.from('job_transfers').insert({
+        job_id: jobId, from_driver: me.id, to_driver: toDriver, note: note || null
+      });
+      if (error) {
+        if (error.code === '23505' || String(error.message).indexOf('jt_one_pending') > -1) {
+          throw new Error('งานนี้มีคำขอย้ายค้างอยู่แล้ว รอผลก่อน');
+        }
+        if (error.code === '42501') throw new Error('ขอย้ายได้เฉพาะงานที่เป็นของตัวเอง');
+        throw new Error('ส่งคำขอไม่สำเร็จ: ' + error.message);
+      }
+      notify('transfers');
+    },
+
+    async approve(id) {
+      const { error } = await sb.rpc('approve_transfer', { t_id: id });
+      if (error) throw new Error(error.message);
+      notify('jobs');
+    },
+
+    async reject(id, why) {
+      const { error } = await sb.rpc('reject_transfer', { t_id: id, why: why || null });
+      if (error) throw new Error(error.message);
+      notify('transfers');
+    },
+
+    async cancel(id) {
+      const { error } = await sb.from('job_transfers')
+        .update({ status: 'cancelled', decided_by: me ? me.id : null, decided_at: new Date().toISOString() })
+        .eq('id', id);
+      if (error) throw new Error('ยกเลิกคำขอไม่สำเร็จ: ' + error.message);
+      notify('transfers');
+    }
+  };
+
   /* ---------- ตำแหน่งคนขับ ---------- */
 
   let _lastPush = 0;
@@ -473,6 +524,7 @@
       .on('postgres_changes', { event: '*', schema: 'public', table: 'stores' }, () => notify('stores'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, () => notify('drivers'))
       .on('postgres_changes', { event: '*', schema: 'public', table: 'driver_positions' }, () => notify('positions'))
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'job_transfers' }, () => notify('transfers'))
       .subscribe();
   }
 
@@ -520,6 +572,7 @@
     stores: stores, jobs: jobs, drivers: drivers,
     photos: photos, meta: meta,
     pushPosition: pushPosition, allPositions: allPositions,
+    transfers: transfers,
     subscribe: subscribe, unsubscribe: unsubscribeAll,
     migrateLocal: migrateLocal,
     uid: function (p) { return (p ? p + '_' : '') + Math.random().toString(36).slice(2, 10); },

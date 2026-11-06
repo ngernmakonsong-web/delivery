@@ -610,6 +610,25 @@ function jobDetailHtml(j) {
     h += '<div class="note info" style="margin-bottom:13px"><span class="ni">📝</span><div>' + esc(j.note) + '</div></div>';
   }
 
+  const pendTr = (S.transfers || []).find((t) => t.jobId === j.id);
+  if (pendTr) {
+    const from = driverById(pendTr.fromDriver);
+    const to = driverById(pendTr.toDriver);
+    const forMe = pendTr.toDriver === S.myDriverId;
+    h += '<div class="note" style="margin-bottom:13px"><span class="ni">⏳</span><div>' +
+      '<b>มีคำขอย้ายงานค้างอยู่</b><br>' +
+      esc(from ? from.name : '?') + ' → ' + esc(to ? to.name : '?') +
+      (pendTr.note ? '<br>"' + esc(pendTr.note) + '"' : '') +
+      ((forMe || canSeeOffice())
+        ? '<div class="btn-row" style="margin-top:9px">' +
+          '<button class="btn btn-sm btn-pri" type="button" data-act="tr-approve" data-id="' + esc(pendTr.id) + '">' +
+          (forMe ? 'รับงาน' : 'อนุมัติ') + '</button>' +
+          '<button class="btn btn-sm btn-danger" type="button" data-act="tr-reject" data-id="' + esc(pendTr.id) + '">ไม่รับ</button>' +
+          '</div>'
+        : '<br><span class="muted">รออีกฝ่ายกดรับ หรือหัวหน้าอนุมัติ</span>') +
+      '</div></div>';
+  }
+
   if (j.closedWithoutPhoto) {
     h += '<div class="note" style="margin-bottom:13px"><span class="ni">📷</span>' +
       '<div><b>งานนี้ปิดโดยไม่มีรูป</b> ออฟฟิศเป็นผู้อนุมัติให้ข้ามขั้นถ่ายรูป</div></div>';
@@ -699,8 +718,9 @@ function jobDetailHtml(j) {
     h += '<button class="btn btn-block" type="button" data-act="job-reopen" data-id="' + esc(j.id) + '">ย้อนสถานะกลับเป็นถึงร้าน</button>';
   }
   h += '<div class="btn-row">' +
-    '<button class="btn btn-ghost" type="button" data-act="job-move" data-id="' + esc(j.id) + '">ย้ายคนขับ / วัน</button>' +
-    '<button class="btn btn-danger" type="button" data-act="job-del" data-id="' + esc(j.id) + '">ลบงาน</button>' +
+    '<button class="btn btn-ghost" type="button" data-act="job-move" data-id="' + esc(j.id) + '">' +
+      (S.cloud && !canSeeOffice() ? 'ขอย้ายงาน' : 'ย้ายคนขับ / วัน') + '</button>' +
+    (canSeeOffice() ? '<button class="btn btn-danger" type="button" data-act="job-del" data-id="' + esc(j.id) + '">ลบงาน</button>' : '') +
     '</div>';
   h += '</div>';
 

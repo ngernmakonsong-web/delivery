@@ -250,6 +250,7 @@ const S = {
   drivers: [],
   search: '',
   ready: false,
+  transfers: [],          // คำขอย้ายงานที่ยังค้าง
   cloud: false,           // ต่อเซิร์ฟเวอร์กลางอยู่หรือไม่
   me: null,               // โปรไฟล์ของคนที่ล็อกอิน
   role: 'admin',          // driver | office | admin
@@ -306,6 +307,20 @@ async function reload() {
   if (S.cloud && Cloud.isOffice()) {
     try { S.positions = await Cloud.allPositions(); } catch (e) { S.positions = []; }
   }
+  if (S.cloud) await reloadTransfers();
+}
+
+/** คำขอย้ายงานที่ยังค้าง กฎสิทธิ์กรองมาให้เฉพาะที่เกี่ยวกับเราแล้ว */
+async function reloadTransfers() {
+  if (!S.cloud || typeof Cloud === 'undefined') { S.transfers = []; return; }
+  try { S.transfers = await Cloud.transfers.pending(); }
+  catch (e) { S.transfers = []; }
+}
+
+/** คำขอที่รอ "เรา" ตัดสินใจ ใช้ขึ้นป้ายแจ้งเตือน */
+function transfersForMe() {
+  return (S.transfers || []).filter((t) =>
+    t.toDriver === S.myDriverId || (canSeeOffice() && t.fromDriver !== S.myDriverId));
 }
 
 /* ======================= GPS ======================= */
@@ -578,18 +593,27 @@ function renderTopbar() {
   const strip = document.getElementById('driverStrip');
   let html = '';
 
+  const nTr = S.cloud ? transfersForMe().length : 0;
+  const trChip = nTr
+    ? '<button class="dchip tr" type="button" data-act="transfers-open">' +
+      '<span>คำขอย้ายงาน</span><span class="dcount">' + nTr + '</span></button>'
+    : '';
+
   if (S.cloud && S.mode === 'driver') {
     /* คนขับเห็นแค่ของตัวเอง ไม่มีให้สลับคน */
     const list = jobsOfDay(S.date, S.myDriverId);
     const p = progressOf(list);
     html += '<span class="dchip active"><span>' + esc(S.me ? S.me.name : 'ฉัน') + '</span>' +
       '<span class="dcount">' + p.done + '/' + p.total + '</span></span>';
+    html += trChip;
     if (S.me && S.me.vehicle) html += '<span class="dchip">' + esc(S.me.vehicle) + '</span>';
     if (canSeeOffice()) html += '<button class="dchip add" type="button" data-act="mode">ไปมุมมองออฟฟิศ</button>';
     html += '<button class="dchip add" type="button" data-act="users-open">บัญชีของฉัน</button>';
     strip.innerHTML = html;
     return;
   }
+
+  html += trChip;
 
   if (S.mode === 'office') {
     const all = jobsOfDay(S.date, null);

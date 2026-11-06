@@ -858,6 +858,44 @@ ACT['job-from-bill'] = async (el) => {
 ACT['job-move'] = (el) => {
   const j = jobById(el.dataset.id);
   if (!j) return;
+
+  /* คนขับย้ายเองไม่ได้ ต้องส่งคำขอให้คนรับงานหรือหัวหน้าอนุมัติ */
+  if (S.cloud && !canSeeOffice()) {
+    const pend = (S.transfers || []).find((t) => t.jobId === j.id);
+    if (pend) {
+      const to = driverById(pend.toDriver);
+      openSheet(
+        sheetHead('คำขอย้ายงาน', j.storeName || '', true) +
+        '<div class="note" style="margin-bottom:14px"><span class="ni">⏳</span>' +
+        '<div>ส่งคำขอย้ายงานนี้ให้ <b>' + esc(to ? to.name : 'คนขับอีกคน') + '</b> แล้ว ' +
+        'กำลังรออนุมัติ<br>งานจะยังเป็นของคุณจนกว่าจะได้รับอนุมัติ</div></div>' +
+        '<button class="btn btn-danger btn-block" type="button" data-act="tr-cancel" data-id="' + esc(pend.id) + '">' +
+        'ยกเลิกคำขอ</button>'
+      );
+      return;
+    }
+
+    const others = S.drivers.filter((d) => d.id !== S.myDriverId);
+    if (!others.length) { toast('ยังไม่มีคนขับคนอื่นในระบบ', 'bad'); return; }
+
+    openSheet(
+      sheetHead('ขอย้ายงาน', j.storeName || '', true) +
+      '<div class="note info" style="margin-bottom:13px"><span class="ni">ℹ️</span>' +
+      '<div>คุณย้ายงานเองทันทีไม่ได้ ระบบจะส่งคำขอไปให้คนที่รับงาน ' +
+      'งานจะย้ายก็ต่อเมื่อเขากดรับ หรือหัวหน้างานอนุมัติให้</div></div>' +
+      '<div class="f"><label for="trTo">ขอย้ายให้ใคร</label><select id="trTo">' +
+      others.map((d) => '<option value="' + esc(d.id) + '">' + esc(d.name) +
+        (d.vehicle ? ' · ' + esc(d.vehicle) : '') + '</option>').join('') +
+      '</select></div>' +
+      '<div class="f"><label for="trNote">เหตุผล <span class="opt">(ไม่ใส่ก็ได้)</span></label>' +
+      '<textarea id="trNote" placeholder="เช่น รถเสีย ไปต่อไม่ไหว ฝากส่งแทนหน่อย"></textarea></div>' +
+      '<div class="f-err" id="formErr" style="display:none"></div>' +
+      '<button class="btn btn-pri btn-block" type="button" data-act="tr-send" data-id="' + esc(j.id) + '">' +
+      'ส่งคำขอย้ายงาน</button>'
+    );
+    return;
+  }
+
   openSheet(
     sheetHead('ย้ายงาน', j.storeName || '', true) +
     '<div class="f"><label for="mDriver">คนขับ <span style="color:var(--s-failed)">*</span></label><select id="mDriver">' +
@@ -887,6 +925,110 @@ ACT['job-move-save'] = async (el) => {
   closeSheet(true);
   render();
   toast('ย้ายงานแล้ว', 'ok');
+};
+
+/* ======================= คำขอย้ายงาน ======================= */
+
+ACT['tr-send'] = async (el) => {
+  el.disabled = true;
+  el.innerHTML = '<span class="spin"></span> กำลังส่ง...';
+  try {
+    await Cloud.transfers.request(el.dataset.id, val('trTo'), val('trNote'));
+    await reloadTransfers();
+    closeSheet(true);
+    render();
+    toast('ส่งคำขอแล้ว รออีกฝ่ายกดรับ หรือหัวหน้าอนุมัติ', 'ok', 4200);
+  } catch (e) {
+    setErr(e.message);
+    el.disabled = false;
+    el.textContent = 'ส่งคำขอย้ายงาน';
+  }
+};
+
+ACT['tr-cancel'] = async (el) => {
+  try {
+    await Cloud.transfers.cancel(el.dataset.id);
+    await reloadTransfers();
+    closeSheet(true);
+    render();
+    toast('ยกเลิกคำขอแล้ว');
+  } catch (e) { toast(e.message, 'bad', 4000); }
+};
+
+ACT['tr-approve'] = async (el) => {
+  el.disabled = true;
+  el.innerHTML = '<span class="spin"></span>';
+  try {
+    await Cloud.transfers.approve(el.dataset.id);
+    await reloadTransfers();
+    await reload();
+    closeSheet(true);
+    render();
+    toast('รับงานแล้ว งานย้ายมาเป็นของคุณเรียบร้อย', 'ok', 4000);
+  } catch (e) {
+    toast(e.message, 'bad', 4500);
+    el.disabled = false;
+    el.textContent = 'รับงาน';
+  }
+};
+
+ACT['tr-reject'] = (el) => {
+  const id = el.dataset.id;
+  openSheet(
+    sheetHead('ไม่รับงานนี้', '', true) +
+    '<div class="f"><label for="trWhy">เหตุผล <span class="opt">(ไม่ใส่ก็ได้)</span></label>' +
+    '<textarea id="trWhy" placeholder="เช่น คิวเต็มแล้ว ไปไม่ทัน"></textarea></div>' +
+    '<button class="btn btn-danger btn-block" type="button" data-act="tr-reject-go" data-id="' + esc(id) + '">' +
+    'ยืนยันไม่รับงาน</button>'
+  );
+};
+
+ACT['tr-reject-go'] = async (el) => {
+  try {
+    await Cloud.transfers.reject(el.dataset.id, val('trWhy'));
+    await reloadTransfers();
+    closeSheet(true);
+    render();
+    toast('ปฏิเสธคำขอแล้ว งานยังเป็นของคนเดิม');
+  } catch (e) { toast(e.message, 'bad', 4500); }
+};
+
+ACT['transfers-open'] = () => {
+  const list = S.transfers || [];
+  let h = sheetHead('คำขอย้ายงาน', list.length ? list.length + ' รายการรออนุมัติ' : '');
+
+  if (!list.length) {
+    h += emptyBlock('✅', 'ไม่มีคำขอค้าง', 'เมื่อคนขับขอย้ายงานให้กัน คำขอจะมาโผล่ที่นี่');
+  } else {
+    h += list.map((t) => {
+      const j = jobById(t.jobId);
+      const from = driverById(t.fromDriver);
+      const to = driverById(t.toDriver);
+      const forMe = t.toDriver === S.myDriverId;
+      const mine = t.fromDriver === S.myDriverId;
+      return '<div class="card" style="padding:13px;margin-bottom:9px">' +
+        '<div style="font-weight:700;font-size:14.5px;margin-bottom:3px">' +
+          esc(j ? (j.storeName || 'งาน') : 'งานที่ถูกลบไปแล้ว') +
+          (j ? ' <span class="muted" style="font-weight:400;font-size:12.5px">· ' + thDate(j.date) + '</span>' : '') +
+        '</div>' +
+        '<div class="muted" style="font-size:13px">' +
+          esc(from ? from.name : '?') + ' → ' + esc(to ? to.name : '?') +
+        '</div>' +
+        (t.note ? '<div style="font-size:13px;margin-top:5px">"' + esc(t.note) + '"</div>' : '') +
+        '<div class="btn-row" style="margin-top:10px">' +
+          (forMe || canSeeOffice()
+            ? '<button class="btn btn-sm btn-pri" type="button" data-act="tr-approve" data-id="' + esc(t.id) + '">' +
+              (forMe ? 'รับงาน' : 'อนุมัติ') + '</button>' +
+              '<button class="btn btn-sm btn-danger" type="button" data-act="tr-reject" data-id="' + esc(t.id) + '">ไม่รับ</button>'
+            : '') +
+          (mine ? '<button class="btn btn-sm btn-ghost" type="button" data-act="tr-cancel" data-id="' + esc(t.id) + '">ยกเลิกคำขอ</button>' : '') +
+        '</div>' +
+        (j ? '<button class="btn btn-sm btn-ghost btn-block" style="margin-top:7px" type="button" ' +
+          'data-act="job-open" data-id="' + esc(j.id) + '">ดูรายละเอียดงาน</button>' : '') +
+        '</div>';
+    }).join('');
+  }
+  openSheet(h);
 };
 
 /* ======================= เรียงลำดับ ======================= */
