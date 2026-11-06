@@ -125,7 +125,8 @@
   async function loadMe() {
     const { data: s } = await sb.auth.getSession();
     if (!s || !s.session) { me = null; return null; }
-    const { data, error } = await sb.from('profiles').select('*').eq('id', s.session.user.id).maybeSingle();
+    const { data, error } = await withRetry(
+      () => sb.from('profiles').select('*').eq('id', s.session.user.id).maybeSingle());
     if (error) { console.error(error); me = null; return null; }
     me = profIn(data);
     return me;
@@ -165,16 +166,21 @@
     return m.indexOf('schema cache') > -1 || err.code === 'PGRST205' || err.code === 'PGRST202';
   }
 
-  /** ลองใหม่สองสามครั้งเมื่อเจอแคชยังไม่อัปเดต เพราะเดี๋ยวมันก็มาเอง */
-  async function withRetry(fn, tries) {
-    tries = tries || 4;
+  /** ลองใหม่เมื่อเจอแคชของ Supabase ยังไม่อัปเดต
+   *
+   *  ช่วงแรกหลังสร้างตาราง แคชจะกะพริบ คือเครื่องที่รับคำขอบางตัวเห็นตาราง
+   *  บางตัวยังไม่เห็น ยิงซ้ำสักพักเดี๋ยวก็ไปโดนตัวที่เห็น
+   *  รวมแล้วรอได้ประมาณ 25 วินาที ซึ่งเกิดเฉพาะตอนตั้งระบบครั้งแรกเท่านั้น */
+  async function withRetry(fn, tries, onWait) {
+    tries = tries || 8;
     let last = null;
     for (let i = 0; i < tries; i++) {
       const r = await fn();
       if (!r.error) return r;
       last = r.error;
       if (!isSchemaCacheMiss(r.error)) break;
-      await new Promise((res) => setTimeout(res, 1200 * (i + 1)));
+      if (onWait) onWait(i + 1, tries);
+      await new Promise((res) => setTimeout(res, Math.min(1200 + i * 500, 4000)));
     }
     return { error: last };
   }
@@ -209,7 +215,14 @@
     const r = await withRetry(() => sb.from('profiles').upsert({
       id: uid, username: String(username).trim().toLowerCase(),
       name: name, role: 'admin', sort_order: 1
-    }).select().maybeSingle());
+    }).select().maybeSingle(), 8, (n, total) => {
+      const el = document.getElementById('authErr');
+      if (el) {
+        el.style.display = 'block';
+        el.style.color = 'var(--ink-3)';
+        el.textContent = 'Supabase กำลังอัปเดตรายการตาราง กำลังลองใหม่ ' + n + '/' + total + ' รอสักครู่...';
+      }
+    });
 
     if (r.error) {
       if (isSchemaCacheMiss(r.error)) {
@@ -265,10 +278,9 @@
   /** ตารางหลักถูกสร้างแล้วหรือยัง */
   async function tablesReady() {
     try {
-      const { error } = await sb.from('profiles').select('id', { count: 'exact', head: true });
-      if (!error) return true;
-      // ตารางไม่มีจริง ๆ จะได้รหัส 42P01 หรือข้อความว่าไม่พบใน schema cache
-      return false;
+      const { error } = await withRetry(
+        () => sb.from('profiles').select('id', { count: 'exact', head: true }), 5);
+      return !error;
     } catch (e) { return false; }
   }
 
@@ -293,9 +305,11 @@
   function tableApi(name, mapIn, mapOut, order) {
     return {
       async all() {
-        let q = sb.from(name).select('*');
-        if (order) q = q.order(order.col, { ascending: order.asc !== false });
-        const { data, error } = await q;
+        const { data, error } = await withRetry(() => {
+          let q = sb.from(name).select('*');
+          if (order) q = q.order(order.col, { ascending: order.asc !== false });
+          return q;
+        });
         if (error) { console.error(name, error); throw new Error(errMsg(name, error)); }
         return (data || []).map(mapIn);
       },
