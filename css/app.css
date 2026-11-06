@@ -834,3 +834,37 @@ body.auth-mode #screen{ padding:0; min-height:100vh }
 /* งานที่ปิดแล้วและคนขับเปิดดูไม่ได้ */
 .job.is-locked{ opacity:.55 }
 .job.is-locked .job-seq{ background:var(--ink-4) }
+
+/* ป้ายเวลาเดินทางที่ติดกับหมุดงาน */
+.leaflet-tooltip.leg-tip{
+  background:rgba(17,24,39,.9);
+  color:#fff;
+  border:0; border-radius:8px;
+  padding:4px 8px;
+  font-size:11.5px; line-height:1.35;
+  font-family:'Noto Sans Thai', sans-serif;
+  box-shadow:0 2px 8px rgba(0,0,0,.3);
+  white-space:nowrap;
+}
+.leaflet-tooltip.leg-tip::before{ border-right-color:rgba(17,24,39,.9) }
+.leaflet-tooltip{
+  font-family:'Noto Sans Thai', sans-serif;
+  font-size:12px;
+}
+
+/* ป้ายชื่อคนขับกลางเส้นทาง ตอนดูภาพรวมทุกคัน */
+.route-tag{
+  position:absolute;
+  transform:translate(-50%,-50%);
+  padding:3px 9px;
+  border-radius:99px;
+  color:#fff;
+  font-size:11px; font-weight:700;
+  white-space:nowrap;
+  border:2px solid #fff;
+  box-shadow:0 2px 7px rgba(0,0,0,.3);
+}
+
+/* หมุดร้านที่ไม่มีงานวันนี้ */
+.pin-store{ background:var(--ink-3) }
+.pin-store > span{ font-size:11px }

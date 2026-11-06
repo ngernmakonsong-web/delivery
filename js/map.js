@@ -62,6 +62,19 @@ const MapView = (function () {
       });
       const m = L.marker([st.lat, st.lng], { icon: icon, title: st.name });
       m.on('click', () => showCard(j));
+
+      // ป้ายเวลาเดินทางถึงร้านนี้ ติดไว้ถาวรให้เห็นโดยไม่ต้องกด
+      const lg = legOf(j.id);
+      if (lg && !CLOSED[j.status] && list.length <= 18) {
+        m.bindTooltip(
+          '<b>' + Route.mins(lg.duration) + '</b> · ' + Route.km(lg.distance) +
+          '<br><span style="opacity:.75">ถึง ' + Route.eta(lg.duration) + ' น.</span>',
+          { permanent: true, direction: 'right', offset: [10, -8], className: 'leg-tip' }
+        );
+      } else {
+        m.bindTooltip(esc(st.name), { direction: 'top' });
+      }
+
       m.addTo(layerJobs);
       pts.push([st.lat, st.lng]);
     });
@@ -73,10 +86,11 @@ const MapView = (function () {
       if (used[st.id] || st.lat === undefined || st.lat === null) return;
       const icon = L.divIcon({
         className: '',
-        html: '<div class="pin pin-store" style="opacity:.55;width:20px;height:20px;border-width:1.5px"><span></span></div>',
-        iconSize: [20, 20], iconAnchor: [10, 19]
+        html: '<div class="pin pin-store"><span>🏪</span></div>',
+        iconSize: [26, 26], iconAnchor: [13, 24]
       });
       const m = L.marker([st.lat, st.lng], { icon: icon, title: st.name });
+      m.bindTooltip(esc(st.name) + '<br><span style="opacity:.75">ไม่มีงานวันนี้</span>', { direction: 'top' });
       m.on('click', () => showStoreCard(st));
       m.addTo(layerJobs);
     });
@@ -230,6 +244,27 @@ const MapView = (function () {
     if (!layers.length) return;
     routeLine = L.layerGroup(layers).addTo(map);
     routeLine.eachLayer((l) => l.bringToBack());
+
+    // ป้ายสรุปเวลาและระยะของแต่ละคัน วางไว้กลางเส้น
+    if (isAllDriversView()) {
+      const plans = S.plans || {};
+      Object.keys(plans).forEach((did) => {
+        const p = plans[did];
+        if (!p.geometry || p.geometry.length < 4) return;
+        const mid = p.geometry[Math.floor(p.geometry.length / 2)];
+        const d = driverById(did);
+        L.marker(mid, {
+          interactive: false,
+          icon: L.divIcon({
+            className: '',
+            html: '<div class="route-tag" style="background:' + p.color + '">' +
+              esc(d ? d.name : '') + ' · ' + Route.mins(p.total.duration) +
+              ' · ' + Route.km(p.total.distance) + '</div>',
+            iconSize: [0, 0], iconAnchor: [0, 0]
+          })
+        }).addTo(routeLine);
+      });
+    }
   }
 
   /** ป้ายบอกว่าสีไหนเป็นของใคร */
