@@ -42,6 +42,37 @@ const PAY = {
 
 const UNITS = ['ชิ้น', 'ลัง', 'กล่อง', 'แพ็ค', 'ถุง', 'ขวด', 'กระสอบ', 'โหล', 'ชุด', 'กิโลกรัม'];
 
+/* ชั้นแผนที่: ถนน กับ ภาพถ่ายดาวเทียม
+   ดาวเทียมช่วยให้ปักหมุดตรงหน้าร้านได้แม่นกว่ามาก เพราะเห็นตัวอาคารจริง
+   ส่วนแผนที่ถนนในไทยหลายพื้นที่ยังไม่มีรายละเอียดอาคาร */
+const BASEMAPS = {
+  road: {
+    label: 'ถนน',
+    url: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+    maxZoom: 19,
+    attr: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
+  },
+  sat: {
+    label: 'ดาวเทียม',
+    url: 'https://server.arcgisonline.com/ArcGIS/rest/services/World_Imagery/MapServer/tile/{z}/{y}/{x}',
+    maxZoom: 19,
+    attr: 'ภาพถ่ายทางอากาศ &copy; Esri'
+  }
+};
+
+function baseLayer(kind) {
+  const b = BASEMAPS[kind] || BASEMAPS.road;
+  return L.tileLayer(b.url, { maxZoom: b.maxZoom, attribution: b.attr });
+}
+
+function layerToggleHtml(cur, act) {
+  return '<div class="maplayers">' +
+    Object.keys(BASEMAPS).map((k) =>
+      '<button type="button" class="' + (cur === k ? 'on' : '') + '" data-act="' + act + '" data-k="' + k + '">' +
+      BASEMAPS[k].label + '</button>').join('') +
+    '</div>';
+}
+
 const WDAY_SHORT = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
 const WDAY_FULL = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
 const EOM = 32;   // รหัสแทน "สิ้นเดือน" ในรอบวางบิลรายเดือน
@@ -211,6 +242,7 @@ const S = {
   officeDriverId: null,   // null = ทั้งหมด
   pos: null,
   gps: 'off',             // off | getting | on | denied | error
+  basemap: 'road',        // road | sat
   keepAwake: false,
   stores: [],
   jobs: [],
@@ -308,6 +340,7 @@ function gpsStop() {
   setGps('off');
 }
 
+/** อ่านตำแหน่งครั้งเดียวแบบเร็ว (ยอมรับค่าที่เพิ่งอ่านมา) */
 function gpsOnce() {
   return new Promise((res) => {
     if (!('geolocation' in navigator)) return res(null);
@@ -318,6 +351,60 @@ function gpsOnce() {
     );
   });
 }
+
+/** อ่านตำแหน่งให้แม่นที่สุด: เฝ้าดูหลายวินาทีแล้วเก็บค่าที่คลาดเคลื่อนน้อยที่สุด
+ *
+ *  จำเป็นเพราะเครื่องมักคืนค่าแรกจากเสาสัญญาณหรือ Wi-Fi ซึ่งคลาดเคลื่อนเป็นร้อยเมตร
+ *  แล้วค่อยแม่นขึ้นเมื่อจับดาวเทียมได้ ถ้าเอาค่าแรกมาใช้เลยหมุดจะเพี้ยน
+ *  maximumAge:0 บังคับให้อ่านใหม่ ไม่เอาค่าเก่าที่เครื่องจำไว้
+ *
+ *  onProgress จะถูกเรียกทุกครั้งที่ได้ค่าใหม่ เพื่อให้หน้าจอบอกความคืบหน้าได้
+ */
+function gpsBest(ms, onProgress) {
+  ms = ms || 8000;
+  return new Promise((res) => {
+    if (!('geolocation' in navigator)) return res(null);
+    let best = null, id = null, done = false, timer = null;
+
+    const finish = () => {
+      if (done) return;
+      done = true;
+      clearTimeout(timer);
+      if (id !== null) { try { navigator.geolocation.clearWatch(id); } catch (e) {} }
+      res(best);
+    };
+
+    id = navigator.geolocation.watchPosition(
+      (p) => {
+        const c = {
+          lat: p.coords.latitude, lng: p.coords.longitude,
+          acc: p.coords.accuracy, at: new Date().toISOString()
+        };
+        if (!best || c.acc < best.acc) {
+          best = c;
+          S.pos = c;
+          setGps('on');
+          if (onProgress) onProgress(c);
+        }
+        if (c.acc <= 12) finish();   // แม่นพอแล้ว ไม่ต้องรอต่อ
+      },
+      () => { if (!best) finish(); },
+      { enableHighAccuracy: true, maximumAge: 0, timeout: ms }
+    );
+
+    timer = setTimeout(finish, ms);
+  });
+}
+
+/** คำอธิบายความแม่นยำแบบอ่านง่าย */
+function accLabel(acc) {
+  if (acc === undefined || acc === null) return '';
+  const m = Math.round(acc);
+  if (m <= 15) return '± ' + m + ' ม. (แม่นดี)';
+  if (m <= 50) return '± ' + m + ' ม. (พอใช้)';
+  return '± ' + m + ' ม. (ไม่แม่น)';
+}
+function accIsPoor(acc) { return !acc || acc > 50; }
 
 async function toggleKeepAwake(on) {
   S.keepAwake = on;
@@ -608,7 +695,8 @@ ACT['gps-info'] = () => {
   const map = {
     off:     ['ยังไม่เปิดตำแหน่ง', 'กดปุ่มด้านล่างเพื่อขออนุญาตใช้ตำแหน่ง'],
     getting: ['กำลังหาตำแหน่ง', 'รอสักครู่ ถ้าอยู่ในอาคารอาจใช้เวลาหรือคลาดเคลื่อน'],
-    on:      ['ตำแหน่งทำงานปกติ', S.pos ? 'ความคลาดเคลื่อนประมาณ ' + Math.round(S.pos.acc) + ' เมตร อัปเดตล่าสุด ' + clockOf(S.pos.at) : ''],
+    on:      [S.pos && accIsPoor(S.pos.acc) ? 'ตำแหน่งทำงานแต่ไม่แม่น' : 'ตำแหน่งทำงานปกติ',
+              S.pos ? accLabel(S.pos.acc) + ' อัปเดตล่าสุด ' + clockOf(S.pos.at) : ''],
     denied:  ['ถูกปฏิเสธสิทธิ์ตำแหน่ง', 'เปิดใหม่ได้ที่ไอคอนรูปกุญแจหรือ (i) ข้างแถบที่อยู่เว็บ แล้วเลือกอนุญาตตำแหน่ง จากนั้นรีโหลดหน้า'],
     error:   ['หาตำแหน่งไม่ได้', 'ตรวจว่าเปิด GPS ของเครื่องไว้แล้ว และเปิดเว็บนี้ผ่าน https']
   };
@@ -618,9 +706,17 @@ ACT['gps-info'] = () => {
     (S.pos
       ? '<div class="dl">' +
         '<div class="dl-r"><div class="dl-k">พิกัด</div><div class="dl-v mono">' + S.pos.lat.toFixed(6) + ', ' + S.pos.lng.toFixed(6) + '</div></div>' +
-        '<div class="dl-r"><div class="dl-k">คลาดเคลื่อน</div><div class="dl-v">± ' + Math.round(S.pos.acc) + ' เมตร</div></div>' +
+        '<div class="dl-r"><div class="dl-k">คลาดเคลื่อน</div><div class="dl-v">' + accLabel(S.pos.acc) + '</div></div>' +
         '<div class="dl-r"><div class="dl-k">อัปเดต</div><div class="dl-v">' + clockOf(S.pos.at) + '</div></div>' +
         '</div>'
+      : '') +
+    (S.pos && accIsPoor(S.pos.acc)
+      ? '<div class="note" style="margin-bottom:11px"><span class="ni">⚠️</span><div>' +
+        'ตำแหน่งคลาดเคลื่อนมาก มักเกิดจาก 3 สาเหตุ<br>' +
+        '1. เปิดบนคอมพิวเตอร์ ซึ่งไม่มี GPS จริง เดาจากเน็ตที่ใช้ อาจเพี้ยนเป็นกิโลเมตร<br>' +
+        '2. อยู่ในอาคารหรือใต้หลังคา สัญญาณดาวเทียมเข้าไม่ถึง<br>' +
+        '3. ปิดโหมดความแม่นยำสูงในตั้งค่าตำแหน่งของเครื่อง<br><br>' +
+        'ถ้าปักหมุดร้าน ให้ใช้วิธีเลือกจุดบนแผนที่แบบดาวเทียมแทน จะตรงกว่ามาก</div></div>'
       : '') +
     '<label class="check" style="margin-bottom:10px">' +
     '<input type="checkbox" ' + (S.keepAwake ? 'checked' : '') + ' data-chg="keepawake">' +
@@ -629,10 +725,18 @@ ACT['gps-info'] = () => {
     '<button class="btn btn-pri btn-block" type="button" data-act="gps-retry">ขอตำแหน่งอีกครั้ง</button>'
   );
 };
-ACT['gps-retry'] = async () => {
-  gpsStop(); gpsStart();
-  const p = await gpsOnce();
-  if (p) { S.pos = p; setGps('on'); toast('ได้ตำแหน่งแล้ว', 'ok'); closeSheet(true); }
+ACT['gps-retry'] = async (el) => {
+  el.disabled = true;
+  el.innerHTML = '<span class="spin"></span> กำลังรอสัญญาณให้แม่นที่สุด...';
+  gpsStop();
+  const p = await gpsBest(10000);
+  gpsStart();
+  el.disabled = false;
+  el.innerHTML = 'ขอตำแหน่งอีกครั้ง';
+  if (!p) { toast('ยังหาตำแหน่งไม่ได้', 'bad'); return; }
+  toast('ได้ตำแหน่งแล้ว ' + accLabel(p.acc), accIsPoor(p.acc) ? 'bad' : 'ok', 3800);
+  closeSheet(true);
+  ACT['gps-info'](el);
 };
 ACT['keepawake'] = (el) => { toggleKeepAwake(el.checked); };
 
@@ -661,6 +765,7 @@ async function boot() {
 
   S.mode = await DB.meta.get('mode', 'driver');
   S.myDriverId = await DB.meta.get('myDriverId', null);
+  S.basemap = await DB.meta.get('basemap', 'road');
 
   await reload();
 

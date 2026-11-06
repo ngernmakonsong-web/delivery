@@ -13,9 +13,12 @@ const MapView = (function () {
   const DEFAULT_CENTER = [13.7563, 100.5018]; // กรุงเทพฯ
   const DEFAULT_ZOOM = 11;
 
+  let base = null;
+
   function shell() {
     return '<div id="mapwrap">' +
       '<div id="map"></div>' +
+      layerToggleHtml(S.basemap || 'road', 'map-layer') +
       '<button class="map-fab fit" type="button" data-act="map-fit" aria-label="ดูทุกหมุด">' + ICO.fit + '</button>' +
       '<button class="map-fab locate" type="button" data-act="map-locate" aria-label="ไปที่ตำแหน่งฉัน">' + ICO.locate + '</button>' +
       '<div id="mapCard"></div>' +
@@ -180,10 +183,7 @@ const MapView = (function () {
     map = L.map(el, { zoomControl: false, attributionControl: true })
       .setView(center, S.pos ? 14 : DEFAULT_ZOOM);
 
-    L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-      maxZoom: 19,
-      attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
-    }).addTo(map);
+    base = baseLayer(S.basemap || 'road').addTo(map);
 
     L.control.zoom({ position: 'topright' }).addTo(map);
 
@@ -201,7 +201,14 @@ const MapView = (function () {
 
   function teardown() {
     if (map) { map.remove(); map = null; }
-    layerJobs = null; meMarker = null; meCircle = null; didFit = false;
+    layerJobs = null; meMarker = null; meCircle = null; base = null; didFit = false;
+  }
+
+  function setBase(kind) {
+    if (!map) return;
+    if (base) map.removeLayer(base);
+    base = baseLayer(kind).addTo(map);
+    base.bringToBack();
   }
 
   function onPos() {
@@ -216,7 +223,7 @@ const MapView = (function () {
   }
 
   return {
-    shell: shell, mount: mount, teardown: teardown,
+    shell: shell, mount: mount, teardown: teardown, setBase: setBase,
     onPos: onPos, fit: fit, refresh: refresh,
     center: function () {
       if (!map || !S.pos) return;
@@ -226,14 +233,22 @@ const MapView = (function () {
 })();
 
 ACT['map-fit'] = () => MapView.fit();
+
+ACT['map-layer'] = async (el) => {
+  const k = el.dataset.k;
+  S.basemap = k;
+  await DB.meta.set('basemap', k);
+  document.querySelectorAll('#mapwrap .maplayers button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+  MapView.setBase(k);
+};
+
 ACT['map-locate'] = async () => {
-  if (!S.pos) {
-    toast('กำลังหาตำแหน่ง...');
-    const p = await gpsOnce();
-    if (!p) { toast('หาตำแหน่งไม่ได้', 'bad'); return; }
-    S.pos = p; setGps('on'); MapView.refresh();
-  }
+  toast('กำลังรอสัญญาณให้แม่นที่สุด...', '', 8000);
+  const p = await gpsBest(8000, () => { MapView.refresh(); MapView.center(); });
+  if (!p) { toast('หาตำแหน่งไม่ได้ ตรวจว่าเปิด GPS ของเครื่องแล้ว', 'bad', 4000); return; }
+  MapView.refresh();
   MapView.center();
+  toast('ตำแหน่งของคุณ ' + accLabel(p.acc), accIsPoor(p.acc) ? 'bad' : 'ok', 3800);
 };
 ACT['map-card-close'] = () => {
   const c = document.getElementById('mapCard');

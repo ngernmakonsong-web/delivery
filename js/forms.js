@@ -1063,7 +1063,7 @@ ACT['bc-wday'] = (el) => toggleDayInput('sBcDaysW', Number(el.dataset.d), el);
 
 /* ---- ปักหมุดบนแผนที่ ---- */
 
-let _pmMap = null, _pmMarker = null, _pmOnPick = null;
+let _pmMap = null, _pmMarker = null, _pmOnPick = null, _pmBase = null, _pmAcc = null;
 
 function setPmCoord(ll) {
   const el = document.getElementById('pmCoord');
@@ -1072,16 +1072,20 @@ function setPmCoord(ll) {
 
 function openPinPicker(o) {
   _pmOnPick = o.onPick;
+  const base = S.basemap || 'sat';
   openSheet(
     sheetHead('ปักหมุดบนแผนที่', o.name || '', true) +
     '<div class="note info" style="margin-bottom:11px"><span class="ni">👆</span>' +
-    '<div>ซูมเข้าให้ใกล้ที่สุดแล้วแตะตรงหน้าร้าน หรือลากหมุดไปวาง ยิ่งซูมใกล้หมุดยิ่งตรง</div></div>' +
+    '<div>สลับเป็น <b>ดาวเทียม</b> จะเห็นตัวอาคารจริง ปักหมุดได้ตรงกว่าแผนที่ถนนมาก ' +
+    'ซูมเข้าให้ใกล้ที่สุดแล้วแตะตรงหน้าร้าน หรือลากหมุดไปวาง</div></div>' +
     '<div class="pickmap">' +
       '<div class="pm-map" id="pmMap"></div>' +
+      layerToggleHtml(base, 'pm-layer') +
       '<div class="pm-tip">แตะบนแผนที่ หรือลากหมุด</div>' +
       '<button class="pm-locate" type="button" data-act="pm-locate" aria-label="ไปที่ตำแหน่งฉัน">' + ICO.locate + '</button>' +
     '</div>' +
     '<div class="pm-coord"><span class="muted">พิกัดที่เลือก</span><span class="mono" id="pmCoord">ยังไม่ได้เลือก</span></div>' +
+    '<div id="pmAccNote"></div>' +
     '<button class="btn btn-pri btn-block" style="margin-top:12px" type="button" data-act="pm-ok">ใช้จุดนี้</button>' +
     '<button class="btn btn-ghost btn-block" style="margin-top:8px" type="button" data-act="sheet-back">ยกเลิก</button>',
     () => mountPickMap(o)
@@ -1097,16 +1101,14 @@ function mountPickMap(o) {
   const has = o.lat !== undefined && o.lat !== null && o.lat !== '';
   const start = has ? [Number(o.lat), Number(o.lng)]
     : (S.pos ? [S.pos.lat, S.pos.lng] : [13.7563, 100.5018]);
-  const zoom = has ? 18 : (S.pos ? 17 : 12);
+  const zoom = has ? 18 : (S.pos ? 18 : 12);
 
   _pmMap = L.map(el, { zoomControl: true, attributionControl: true }).setView(start, zoom);
-  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
-    maxZoom: 19,
-    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
-  }).addTo(_pmMap);
+  _pmBase = baseLayer(S.basemap || 'sat').addTo(_pmMap);
 
   _pmMarker = L.marker(start, {
     draggable: true,
+    autoPan: true,
     icon: L.divIcon({
       className: '',
       html: '<div class="pin pin-deliver" style="width:32px;height:32px"><span>📍</span></div>',
@@ -1124,24 +1126,68 @@ function mountPickMap(o) {
   setTimeout(() => { if (_pmMap) _pmMap.invalidateSize(); }, 650);
 }
 
+ACT['pm-layer'] = async (el) => {
+  const k = el.dataset.k;
+  S.basemap = k;
+  await DB.meta.set('basemap', k);
+  document.querySelectorAll('.pickmap .maplayers button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+  if (_pmMap) {
+    if (_pmBase) _pmMap.removeLayer(_pmBase);
+    _pmBase = baseLayer(k).addTo(_pmMap);
+    _pmBase.bringToBack();
+  }
+};
+
+/** วงกลมแสดงความคลาดเคลื่อนของ GPS บนแผนที่ปักหมุด */
+function pmShowAccuracy(p) {
+  if (!_pmMap) return;
+  if (_pmAcc) { _pmMap.removeLayer(_pmAcc); _pmAcc = null; }
+  if (!p || !p.acc) return;
+  _pmAcc = L.circle([p.lat, p.lng], {
+    radius: p.acc, color: '#1a73e8', weight: 1,
+    fillColor: '#1a73e8', fillOpacity: 0.12, interactive: false
+  }).addTo(_pmMap);
+
+  const note = document.getElementById('pmAccNote');
+  if (!note) return;
+  note.innerHTML = accIsPoor(p.acc)
+    ? '<div class="note" style="margin-top:9px"><span class="ni">⚠️</span><div>' +
+      'ตำแหน่งที่เครื่องจับได้คลาดเคลื่อน ' + accLabel(p.acc) + ' วงกลมฟ้าคือขอบเขตที่เป็นไปได้<br>' +
+      '<b>อย่าใช้จุดนี้ตรง ๆ</b> ให้ซูมเข้าแล้วแตะตรงหน้าร้านจริงแทน ' +
+      'ถ้าอยู่ในอาคารหรือใช้คอมพิวเตอร์ ตำแหน่งจะเพี้ยนมากเป็นปกติ</div></div>'
+    : '<div class="note info" style="margin-top:9px"><span class="ni">✓</span><div>' +
+      'ตำแหน่งที่จับได้ ' + accLabel(p.acc) + '</div></div>';
+}
+
 ACT['pm-locate'] = async (el) => {
   el.innerHTML = '<span class="spin" style="border-color:var(--line);border-top-color:var(--brand)"></span>';
-  const p = await gpsOnce();
+  const note = document.getElementById('pmAccNote');
+  if (note) note.innerHTML = '<div class="note info" style="margin-top:9px"><span class="ni">📡</span>' +
+    '<div>กำลังรอสัญญาณดาวเทียมให้แม่นที่สุด ประมาณ 8 วินาที อย่าเพิ่งปิด</div></div>';
+
+  const p = await gpsBest(8000, (c) => {
+    if (_pmMap && _pmMarker) {
+      _pmMap.setView([c.lat, c.lng], Math.max(_pmMap.getZoom(), 18));
+      _pmMarker.setLatLng([c.lat, c.lng]);
+      setPmCoord(c);
+      pmShowAccuracy(c);
+    }
+  });
+
   el.innerHTML = ICO.locate;
-  if (!p) { toast('หาตำแหน่งไม่ได้ ลองออกมาที่โล่ง', 'bad'); return; }
-  S.pos = p;
-  if (_pmMap && _pmMarker) {
-    _pmMap.setView([p.lat, p.lng], 18);
-    _pmMarker.setLatLng([p.lat, p.lng]);
-    setPmCoord(p);
+  if (!p) {
+    if (note) note.innerHTML = '';
+    toast('หาตำแหน่งไม่ได้ ตรวจว่าเปิด GPS ของเครื่องแล้ว', 'bad', 4000);
+    return;
   }
+  pmShowAccuracy(p);
 };
 
 ACT['pm-ok'] = () => {
   if (!_pmMarker) { toast('ยังไม่ได้เลือกจุด', 'bad'); return; }
   const ll = _pmMarker.getLatLng();
   const cb = _pmOnPick;
-  if (_pmMap) { _pmMap.remove(); _pmMap = null; _pmMarker = null; }
+  if (_pmMap) { _pmMap.remove(); _pmMap = null; _pmMarker = null; _pmBase = null; _pmAcc = null; }
   _pmOnPick = null;
   if (cb) cb(ll.lat, ll.lng);
 };
@@ -1190,17 +1236,35 @@ ACT['pin-map-store'] = (el) => {
 
 ACT['pin-here'] = async (el) => {
   el.disabled = true;
-  el.innerHTML = '<span class="spin" style="border-color:var(--line);border-top-color:var(--brand)"></span> กำลังหาตำแหน่ง...';
-  const p = await gpsOnce();
+  const state = document.getElementById('pinState');
+  el.innerHTML = '<span class="spin" style="border-color:var(--line);border-top-color:var(--brand)"></span> กำลังรอสัญญาณให้แม่น...';
+
+  const p = await gpsBest(8000, (c) => {
+    if (state) state.innerHTML = '<span class="muted">กำลังปรับให้แม่นขึ้น... ' + accLabel(c.acc) + '</span>';
+  });
+
   el.disabled = false;
   el.innerHTML = ICO.locate + ' ใช้ตำแหน่งที่ยืนอยู่ตอนนี้';
-  if (!p) { toast('หาตำแหน่งไม่ได้ ลองออกมาที่โล่งหรือตรวจว่าเปิด GPS แล้ว', 'bad', 4000); return; }
+  if (!p) {
+    if (state) state.innerHTML = '<span style="color:var(--accent)">ยังไม่ได้ปักหมุด</span>';
+    toast('หาตำแหน่งไม่ได้ ลองออกมาที่โล่งหรือตรวจว่าเปิด GPS แล้ว', 'bad', 4000);
+    return;
+  }
+
   document.getElementById('sLat').value = p.lat;
   document.getElementById('sLng').value = p.lng;
-  document.getElementById('pinState').innerHTML =
-    '<span style="color:var(--s-done)">✓ ปักหมุดแล้ว</span> <span class="muted mono" style="font-weight:400;font-size:12.5px">' +
-    p.lat.toFixed(6) + ', ' + p.lng.toFixed(6) + ' (± ' + Math.round(p.acc) + ' ม.)</span>';
-  toast('ปักหมุดจากตำแหน่งปัจจุบันแล้ว', 'ok');
+  const poor = accIsPoor(p.acc);
+  if (state) {
+    state.innerHTML =
+      '<span style="color:' + (poor ? 'var(--accent)' : 'var(--s-done)') + '">' +
+      (poor ? '⚠ ปักหมุดแล้วแต่ไม่แม่น' : '✓ ปักหมุดแล้ว') + '</span> ' +
+      '<span class="muted mono" style="font-weight:400;font-size:12.5px">' +
+      p.lat.toFixed(6) + ', ' + p.lng.toFixed(6) + ' ' + accLabel(p.acc) + '</span>' +
+      (poor ? '<div class="f-hint" style="color:var(--accent)">คลาดเคลื่อนเกิน 50 เมตร ' +
+        'แนะนำให้กดปุ่มเลือกจุดบนแผนที่แล้วแตะตรงหน้าร้านแทน จะตรงกว่ามาก</div>' : '');
+  }
+  toast(poor ? 'ได้ตำแหน่งแล้วแต่ไม่แม่น ' + accLabel(p.acc) : 'ปักหมุดแล้ว ' + accLabel(p.acc),
+    poor ? 'bad' : 'ok', poor ? 5000 : 2600);
 };
 
 ACT['pin-paste'] = (el) => {
