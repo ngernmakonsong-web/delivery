@@ -523,6 +523,21 @@ button{ cursor:pointer; border:0; background:none; -webkit-tap-highlight-color:t
 
 .actions{ display:flex; flex-direction:column; gap:8px; margin:14px 0 6px }
 
+.stephint{
+  display:flex; align-items:center; gap:8px;
+  font-size:13px; font-weight:600; color:var(--ink-2);
+  padding:2px 2px 2px 0;
+}
+.stephint .sn{
+  flex:none;
+  display:grid; place-items:center;
+  min-width:34px; height:22px; padding:0 7px;
+  border-radius:99px;
+  background:var(--brand); color:#fff;
+  font-size:11.5px; font-weight:700;
+  font-variant-numeric:tabular-nums;
+}
+
 .tl{ position:relative; padding-left:22px; margin:0 0 12px }
 .tl::before{ content:''; position:absolute; left:5px; top:6px; bottom:6px; width:2px; background:var(--line) }
 .tl-i{ position:relative; padding:0 0 11px }

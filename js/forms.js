@@ -553,9 +553,25 @@ ACT['job-reopen'] = (el) => {
 
 /* ======================= ปิดงานสำเร็จ ======================= */
 
+/** ต้องมีรูปก่อนปิดงาน ยกเว้นออฟฟิศที่กดข้ามแบบบันทึกไว้ */
+function photoGateHtml(j, title) {
+  return sheetHead(title, j.storeName || '', true) +
+    '<div class="note" style="margin-bottom:14px"><span class="ni">📷</span>' +
+    '<div><b>ยังไม่ได้ถ่ายรูป</b><br>ต้องมีรูปหน้างานอย่างน้อย 1 รูปก่อนปิดงาน ' +
+    'ทั้งกรณีส่งสำเร็จและส่งไม่สำเร็จ</div></div>' +
+    '<button class="btn btn-acc btn-block" style="margin-bottom:8px" type="button" ' +
+    'data-act="photo-add" data-id="' + esc(j.id) + '">' + ICO.cam + ' ถ่ายรูปเลย</button>' +
+    '<button class="btn btn-block" style="margin-bottom:8px" type="button" ' +
+    'data-act="photo-pick" data-id="' + esc(j.id) + '">เลือกรูปจากคลังภาพ</button>' +
+    '<button class="btn btn-ghost btn-block" type="button" data-act="sheet-back">ย้อนกลับ</button>';
+}
+
+function hasPhoto(j) { return ((j && j.photos) || []).length > 0; }
+
 ACT['close-ok'] = (el) => {
   const j = jobById(el.dataset.id);
   if (!j) return;
+  if (!hasPhoto(j) && !j.closedWithoutPhoto) { openSheet(photoGateHtml(j, 'ปิดงานสำเร็จ')); return; }
   const nPhotos = (j.photos || []).length;
 
   let h = sheetHead('ปิดงานสำเร็จ', j.storeName || '', true);
@@ -619,9 +635,30 @@ ACT['cmethod'] = (el) => {
   document.querySelectorAll('#cMethodSeg button').forEach((b) => b.classList.toggle('on', b.dataset.k === el.dataset.k));
 };
 
+/** ออฟฟิศกดข้ามการถ่ายรูป โดยบันทึกไว้ว่าปิดงานนี้ไม่มีรูป */
+ACT['close-nophoto'] = (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+  confirmSheet('ปิดงานโดยไม่มีรูป?',
+    'ปกติคนขับต้องถ่ายรูปก่อนปิดงานเสมอ การข้ามขั้นนี้ใช้เฉพาะกรณีจำเป็น ' +
+    'เช่น กล้องเสียหรือแก้ไขข้อมูลย้อนหลัง<br><br>' +
+    'ระบบจะ<b>บันทึกไว้ว่างานนี้ปิดโดยไม่มีรูป</b> และแสดงในรายงาน',
+    'ยืนยันข้าม', false, async () => {
+      await DB.jobs.put(Object.assign({}, j, { closedWithoutPhoto: true }));
+      await reload();
+      closeSheet(true);
+      openJob(j.id);
+      toast('ข้ามการถ่ายรูปแล้ว ปิดงานได้', 'ok');
+    });
+};
+
 ACT['close-ok-save'] = async (el) => {
   const j = jobById(el.dataset.id);
   if (!j) return;
+  if (!hasPhoto(j) && !j.closedWithoutPhoto) {
+    setErr('ต้องถ่ายรูปก่อนปิดงาน กดย้อนกลับแล้วถ่ายรูป');
+    return;
+  }
   const rec = Object.assign({}, j, {
     status: 'done',
     closedAt: new Date().toISOString(),
@@ -668,6 +705,7 @@ ACT['close-ok-save'] = async (el) => {
 ACT['close-fail'] = (el) => {
   const j = jobById(el.dataset.id);
   if (!j) return;
+  if (!hasPhoto(j) && !j.closedWithoutPhoto) { openSheet(photoGateHtml(j, 'ปิดงานไม่สำเร็จ')); return; }
 
   let h = sheetHead('ปิดงานไม่สำเร็จ', j.storeName || '', true);
 
@@ -724,6 +762,10 @@ ACT['rs-pick'] = (el) => {
 ACT['close-fail-save'] = async (el) => {
   const j = jobById(el.dataset.id);
   if (!j) return;
+  if (!hasPhoto(j) && !j.closedWithoutPhoto) {
+    setErr('ต้องถ่ายรูปก่อนปิดงาน กดย้อนกลับแล้วถ่ายรูป');
+    return;
+  }
 
   let reason = val('fReason');
   if (!reason) { setErr('ยังไม่ได้เลือกสาเหตุ'); return; }

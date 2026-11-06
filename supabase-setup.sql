@@ -79,6 +79,9 @@ create table if not exists public.jobs (
   created_at     timestamptz not null default now(),
   updated_at     timestamptz not null default now()
 );
+-- คอลัมน์ที่เพิ่มทีหลัง เขียนแยกไว้เพื่อให้รันซ้ำกับฐานข้อมูลเดิมได้
+alter table public.jobs add column if not exists closed_without_photo boolean not null default false;
+
 create index if not exists jobs_date_idx   on public.jobs (date);
 create index if not exists jobs_driver_idx on public.jobs (driver_id, date);
 create index if not exists jobs_store_idx  on public.jobs (store_id);

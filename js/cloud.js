@@ -60,6 +60,7 @@
       parentJobId: r.parent_job_id || undefined,
       childJobId: r.child_job_id || undefined,
       round: r.round || 1,
+      closedWithoutPhoto: !!r.closed_without_photo,
       arrivedAt: r.arrived_at || undefined, closedAt: r.closed_at || undefined,
       createdAt: r.created_at, updatedAt: r.updated_at
     };
@@ -79,6 +80,7 @@
       parent_job_id: o.parentJobId || null,
       child_job_id: o.childJobId || null,
       round: o.round || 1,
+      closed_without_photo: !!o.closedWithoutPhoto,
       arrived_at: o.arrivedAt || null, closed_at: o.closedAt || null
     };
     if (o.id) r.id = o.id;

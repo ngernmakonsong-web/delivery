@@ -86,6 +86,7 @@ function jobCard(j, opts) {
       (sub ? '<div class="job-meta">' + esc(sub) + '</div>' : '') +
       '<div class="job-foot">' +
         chipStatus(j.status) +
+        (CLOSED[j.status] && !(j.photos || []).length ? '<span class="chip st-failed">ไม่มีรูป</span>' : '') +
         (j.cod && j.cod.on ? '<span class="job-cod">เก็บเงิน ' + money(j.cod.expected) + '</span>' : '') +
         (drv ? '<span class="chip">' + esc(drv.name) + '</span>' : '') +
         (d !== null ? '<span class="chip">' + distLabel(d) + '</span>' : '') +
@@ -99,6 +100,11 @@ function jobCard(j, opts) {
         '</div>'
       : '') +
     '</div>';
+}
+
+/** ป้ายบอกว่าตอนนี้อยู่ขั้นที่เท่าไรของงาน */
+function stepHint(n, text) {
+  return '<div class="stephint"><span class="sn">' + n + '/4</span>' + esc(text) + '</div>';
 }
 
 function emptyBlock(ico, title, text, btn) {
@@ -604,6 +610,11 @@ function jobDetailHtml(j) {
     h += '<div class="note info" style="margin-bottom:13px"><span class="ni">📝</span><div>' + esc(j.note) + '</div></div>';
   }
 
+  if (j.closedWithoutPhoto) {
+    h += '<div class="note" style="margin-bottom:13px"><span class="ni">📷</span>' +
+      '<div><b>งานนี้ปิดโดยไม่มีรูป</b> ออฟฟิศเป็นผู้อนุมัติให้ข้ามขั้นถ่ายรูป</div></div>';
+  }
+
   /* ---- ปิดงานไม่สำเร็จ ---- */
   if (j.status === 'failed') {
     const f = j.fail || {};
@@ -644,18 +655,46 @@ function jobDetailHtml(j) {
       }).join('') + '</div>';
   }
 
-  /* ---- ปุ่มดำเนินการ ---- */
+  /* ---- ปุ่มดำเนินการ ตามลำดับขั้น ---- */
+  const nPhoto = (j.photos || []).length;
   h += '<div class="actions">';
+
   if (j.status === 'pending' || j.status === 'assigned') {
-    h += '<button class="btn btn-pri btn-block" type="button" data-act="job-st" data-id="' + esc(j.id) + '" data-st="enroute">' + ICO.truck + ' เริ่มเดินทาง</button>';
+    h += stepHint(1, 'เริ่มเดินทางไปร้าน') +
+      '<button class="btn btn-pri btn-block" type="button" data-act="job-st" data-id="' + esc(j.id) + '" data-st="enroute">' +
+      ICO.truck + ' เริ่มเดินทาง</button>';
   }
+
   if (j.status === 'enroute') {
-    h += '<button class="btn btn-pri btn-block" type="button" data-act="job-st" data-id="' + esc(j.id) + '" data-st="arrived">' + ICO.pin + ' ถึงร้านแล้ว</button>';
+    h += stepHint(2, 'ถึงหน้าร้านแล้วกดยืนยัน') +
+      '<button class="btn btn-pri btn-block" type="button" data-act="job-st" data-id="' + esc(j.id) + '" data-st="arrived">' +
+      ICO.pin + ' ถึงร้านแล้ว</button>';
   }
-  if (j.status === 'enroute' || j.status === 'arrived') {
-    h += '<button class="btn btn-acc btn-block" type="button" data-act="close-ok" data-id="' + esc(j.id) + '">' + ICO.check + ' ปิดงานสำเร็จ</button>' +
-      '<button class="btn btn-danger btn-block" type="button" data-act="close-fail" data-id="' + esc(j.id) + '">' + ICO.x + ' ปิดงานไม่สำเร็จ</button>';
+
+  if (j.status === 'arrived') {
+    if (!nPhoto) {
+      /* ยังไม่ถ่ายรูป ปิดงานไม่ได้ */
+      h += stepHint(3, 'ถ่ายรูปก่อน แล้วจึงปิดงานได้') +
+        '<button class="btn btn-acc btn-block" type="button" data-act="photo-add" data-id="' + esc(j.id) + '">' +
+        ICO.cam + ' ถ่ายรูปหน้างาน</button>' +
+        '<button class="btn btn-ghost btn-block" type="button" data-act="photo-pick" data-id="' + esc(j.id) + '">' +
+        'เลือกรูปจากคลังภาพ</button>' +
+        '<div class="note" style="margin-top:4px"><span class="ni">📷</span>' +
+        '<div>ต้องมีรูปอย่างน้อย 1 รูปก่อนปิดงาน ทั้งกรณีส่งสำเร็จและส่งไม่สำเร็จ</div></div>';
+      if (canSeeOffice()) {
+        h += '<button class="btn btn-ghost btn-block" style="margin-top:4px" type="button" ' +
+          'data-act="close-nophoto" data-id="' + esc(j.id) + '">' +
+          'ปิดงานโดยไม่มีรูป (สิทธิ์ออฟฟิศ)</button>';
+      }
+    } else {
+      h += stepHint(4, 'แนบรูปแล้ว ' + nPhoto + ' รูป ปิดงานได้') +
+        '<button class="btn btn-acc btn-block" type="button" data-act="close-ok" data-id="' + esc(j.id) + '">' +
+        ICO.check + ' ปิดงานสำเร็จ</button>' +
+        '<button class="btn btn-danger btn-block" type="button" data-act="close-fail" data-id="' + esc(j.id) + '">' +
+        ICO.x + ' ปิดงานไม่สำเร็จ</button>';
+    }
   }
+
   if (CLOSED[j.status]) {
     h += '<button class="btn btn-block" type="button" data-act="job-reopen" data-id="' + esc(j.id) + '">ย้อนสถานะกลับเป็นถึงร้าน</button>';
   }
