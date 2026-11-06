@@ -1072,7 +1072,9 @@ function setPmCoord(ll) {
 
 function openPinPicker(o) {
   _pmOnPick = o.onPick;
-  const base = S.basemap || 'sat';
+  // หน้าปักหมุดเริ่มที่ดาวเทียมเสมอ เพราะเห็นตัวอาคารจริง ปักได้ตรงกว่า
+  // (แยกการตั้งค่าจากแผนที่หลัก ซึ่งใช้แผนที่ถนนดูเส้นทางสะดวกกว่า)
+  const base = S.basemapPick || 'sat';
   openSheet(
     sheetHead('ปักหมุดบนแผนที่', o.name || '', true) +
     '<div class="note info" style="margin-bottom:11px"><span class="ni">👆</span>' +
@@ -1104,7 +1106,7 @@ function mountPickMap(o) {
   const zoom = has ? 18 : (S.pos ? 18 : 12);
 
   _pmMap = L.map(el, { zoomControl: true, attributionControl: true }).setView(start, zoom);
-  _pmBase = baseLayer(S.basemap || 'sat').addTo(_pmMap);
+  _pmBase = baseLayer(S.basemapPick || 'sat').addTo(_pmMap);
 
   _pmMarker = L.marker(start, {
     draggable: true,
@@ -1128,8 +1130,8 @@ function mountPickMap(o) {
 
 ACT['pm-layer'] = async (el) => {
   const k = el.dataset.k;
-  S.basemap = k;
-  await DB.meta.set('basemap', k);
+  S.basemapPick = k;
+  await DB.meta.set('basemapPick', k);
   document.querySelectorAll('.pickmap .maplayers button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
   if (_pmMap) {
     if (_pmBase) _pmMap.removeLayer(_pmBase);

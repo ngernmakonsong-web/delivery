@@ -242,7 +242,8 @@ const S = {
   officeDriverId: null,   // null = ทั้งหมด
   pos: null,
   gps: 'off',             // off | getting | on | denied | error
-  basemap: 'road',        // road | sat
+  basemap: 'road',        // แผนที่หลัก: road | sat
+  basemapPick: 'sat',     // หน้าปักหมุด: เริ่มที่ดาวเทียม
   keepAwake: false,
   stores: [],
   jobs: [],
@@ -766,6 +767,7 @@ async function boot() {
   S.mode = await DB.meta.get('mode', 'driver');
   S.myDriverId = await DB.meta.get('myDriverId', null);
   S.basemap = await DB.meta.get('basemap', 'road');
+  S.basemapPick = await DB.meta.get('basemapPick', 'sat');
 
   await reload();
 
