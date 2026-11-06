@@ -98,6 +98,24 @@ create table if not exists public.driver_positions (
 );
 
 -- ------------------------------------------------------------
+--  การตรวจงาน
+--  คนขับปิดงาน -> เข้าคิวรอตรวจ
+--  หัวหน้า/ผู้ดูแล ตรวจแล้วกด ผ่าน หรือ ไม่ผ่าน
+--  ไม่ผ่าน = ส่งกลับให้คนขับแก้ สถานะกลับไปเป็น "ถึงร้าน"
+-- ------------------------------------------------------------
+alter table public.jobs
+  add column if not exists review_status text not null default 'none';
+alter table public.jobs
+  add column if not exists review_note  text;
+alter table public.jobs
+  add column if not exists reviewed_by  uuid references public.profiles(id) on delete set null;
+alter table public.jobs
+  add column if not exists reviewed_at  timestamptz;
+
+create index if not exists jobs_review_idx
+  on public.jobs (review_status) where review_status = 'pending';
+
+-- ------------------------------------------------------------
 -- 4.5) คำขอย้ายงาน
 --      หัวหน้าหรือผู้ดูแลย้ายงานได้ทันที
 --      คนขับย้ายเองไม่ได้ ต้องส่งคำขอ แล้วรอคนรับงานหรือหัวหน้าอนุมัติ

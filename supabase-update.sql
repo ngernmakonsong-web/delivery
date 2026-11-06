@@ -13,6 +13,24 @@ create policy profiles_delete on public.profiles
 alter table public.jobs
   add column if not exists closed_without_photo boolean not null default false;
 
+-- ------------------------------------------------------------
+--  การตรวจงาน
+--  คนขับปิดงาน -> เข้าคิวรอตรวจ
+--  หัวหน้า/ผู้ดูแล ตรวจแล้วกด ผ่าน หรือ ไม่ผ่าน
+--  ไม่ผ่าน = ส่งกลับให้คนขับแก้ สถานะกลับไปเป็น "ถึงร้าน"
+-- ------------------------------------------------------------
+alter table public.jobs
+  add column if not exists review_status text not null default 'none';
+alter table public.jobs
+  add column if not exists review_note  text;
+alter table public.jobs
+  add column if not exists reviewed_by  uuid references public.profiles(id) on delete set null;
+alter table public.jobs
+  add column if not exists reviewed_at  timestamptz;
+
+create index if not exists jobs_review_idx
+  on public.jobs (review_status) where review_status = 'pending';
+
 -- 3) ตารางคำขอย้ายงาน
 create table if not exists public.job_transfers (
   id          uuid primary key default gen_random_uuid(),
@@ -134,4 +152,8 @@ select
   (select count(*) from pg_policies
      where schemaname='public' and policyname='profiles_delete')        as "สิทธิ์ลบบัญชี (ต้องเป็น 1)",
   (select count(*) from pg_trigger
-     where tgname='jobs_guard_closed')                                  as "ล็อกงานที่ปิดแล้ว (ต้องเป็น 1)";
+     where tgname='jobs_guard_closed')                                  as "ล็อกงานที่ปิดแล้ว (ต้องเป็น 1)",
+  (select count(*) from information_schema.columns
+     where table_schema='public' and table_name='jobs'
+       and column_name in ('review_status','review_note','reviewed_by','reviewed_at'))
+                                                                        as "ช่องตรวจงาน (ต้องเป็น 4)";

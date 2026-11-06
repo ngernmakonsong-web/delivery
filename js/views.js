@@ -100,6 +100,9 @@ function jobCard(j, opts) {
         chipStatus(j.status) +
         (CLOSED[j.status] && !(j.photos || []).length ? '<span class="chip st-failed">ไม่มีรูป</span>' : '') +
         (!openable ? '<span class="chip">🔒 ปิดงานแล้ว</span>' : '') +
+        (j.reviewStatus === 'pending' ? '<span class="chip st-enroute">รอตรวจ</span>' : '') +
+        (j.reviewStatus === 'rejected' ? '<span class="chip st-failed">ส่งกลับแก้</span>' : '') +
+        (j.reviewStatus === 'passed' ? '<span class="chip st-done">ตรวจผ่าน</span>' : '') +
         (j.cod && j.cod.on ? '<span class="job-cod">เก็บเงิน ' + money(j.cod.expected) + '</span>' : '') +
         (drv ? '<span class="chip">' + esc(drv.name) + '</span>' : '') +
         (d !== null ? '<span class="chip">' + distLabel(d) + '</span>' : '') +
@@ -473,6 +476,66 @@ Views.reports = function () {
   return h;
 };
 
+/* ======================= หน้า: ตรวจงาน (ออฟฟิศ) ======================= */
+
+Views.review = function () {
+  const pending = jobsAwaitingReview();
+  const recent = S.jobs.filter((j) => j.reviewStatus === 'passed' || j.reviewStatus === 'rejected')
+    .sort((a, b) => String(b.reviewedAt || '').localeCompare(String(a.reviewedAt || '')))
+    .slice(0, 15);
+
+  let h = '';
+
+  h += '<div class="sec"><div class="tiles tiles-3">' +
+    tile('รอตรวจ', pending.length, 'งาน', pending.length ? 'warn' : '') +
+    tile('ผ่านแล้ว', S.jobs.filter((j) => j.reviewStatus === 'passed').length, '', 'ok') +
+    tile('ส่งกลับแก้', S.jobs.filter((j) => j.reviewStatus === 'rejected').length, '',
+      S.jobs.filter((j) => j.reviewStatus === 'rejected').length ? 'bad' : '') +
+    '</div></div>';
+
+  h += '<div class="sec"><div class="sec-h"><span class="sec-t">รอตรวจ ' + pending.length + ' งาน</span></div>';
+  if (!pending.length) {
+    h += emptyBlock('✅', 'ตรวจครบแล้ว',
+      'เมื่อคนขับปิดงาน งานจะเข้ามารอตรวจที่นี่อัตโนมัติ<br>กดเข้าไปดูรูปและรายละเอียด แล้วกดผ่านหรือส่งกลับแก้');
+  } else {
+    h += pending.map((j) => reviewRow(j, true)).join('');
+  }
+  h += '</div>';
+
+  if (recent.length) {
+    h += '<div class="sec"><div class="sec-h"><span class="sec-t">ตรวจไปแล้วล่าสุด</span></div>' +
+      recent.map((j) => reviewRow(j, false)).join('') + '</div>';
+  }
+
+  return h;
+};
+
+function reviewRow(j, isPending) {
+  const st = storeById(j.storeId);
+  const drv = driverById(j.driverId);
+  const t = TY[j.type] || TY.deliver;
+  const rv = REV[j.reviewStatus] || REV.none;
+  const nPhoto = (j.photos || []).length;
+  const by = j.reviewedBy ? driverById(j.reviewedBy) : null;
+
+  return '<button class="row" type="button" data-act="job-open" data-id="' + esc(j.id) + '">' +
+    '<div class="row-ico" style="background:var(--line-2)">' + t.ico + '</div>' +
+    '<div class="row-main">' +
+      '<div class="row-t">' + esc(j.storeName || (st && st.name) || '-') + '</div>' +
+      '<div class="row-s">' + esc(thDate(j.date) + ' · ' + (drv ? drv.name : 'ไม่ระบุคนขับ') +
+        ' · ' + (ST[j.status] || {}).label) + '</div>' +
+      '<div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:5px">' +
+        (isPending ? '' : '<span class="chip ' + rv.cls + '">' + rv.label + '</span>') +
+        (nPhoto ? '<span class="chip">' + nPhoto + ' รูป</span>'
+                : '<span class="chip st-failed">ไม่มีรูป</span>') +
+        (j.cod && j.cod.on ? '<span class="chip ty-bill">เก็บเงิน ' + money(j.cod.received) + '</span>' : '') +
+        (by && !isPending ? '<span class="chip">โดย ' + esc(by.name) + '</span>' : '') +
+      '</div>' +
+      (j.reviewNote && !isPending ? '<div class="row-s" style="margin-top:4px">"' + esc(j.reviewNote) + '"</div>' : '') +
+    '</div>' +
+    '<div class="row-x">' + ICO.chev + '</div></button>';
+}
+
 /* ======================= บล็อกตั้งค่า / สำรองข้อมูล ======================= */
 
 function settingsBlock() {
@@ -642,6 +705,37 @@ function jobDetailHtml(j) {
           '</div>'
         : '<br><span class="muted">รออีกฝ่ายกดรับ หรือหัวหน้าอนุมัติ</span>') +
       '</div></div>';
+  }
+
+  /* ---- การตรวจงาน ---- */
+  if (j.reviewStatus && j.reviewStatus !== 'none') {
+    const rv = REV[j.reviewStatus] || REV.none;
+    const by = j.reviewedBy ? driverById(j.reviewedBy) : null;
+
+    if (j.reviewStatus === 'pending') {
+      if (canSeeOffice()) {
+        h += '<div class="card" style="padding:13px;margin-bottom:13px;border:2px solid var(--s-enroute)">' +
+          '<div style="font-weight:700;font-size:15px;margin-bottom:3px">งานนี้รอคุณตรวจ</div>' +
+          '<div class="muted" style="font-size:13px;margin-bottom:11px">' +
+          'ดูรูปและรายละเอียดด้านบน แล้วตัดสินว่าผ่านหรือต้องแก้</div>' +
+          '<div class="btn-row">' +
+          '<button class="btn btn-pri" type="button" data-act="rev-pass" data-id="' + esc(j.id) + '">' +
+          ICO.check + ' ผ่าน</button>' +
+          '<button class="btn btn-danger" type="button" data-act="rev-reject" data-id="' + esc(j.id) + '">' +
+          ICO.x + ' ส่งกลับแก้</button>' +
+          '</div></div>';
+      } else {
+        h += '<div class="note" style="margin-bottom:13px"><span class="ni">⏳</span>' +
+          '<div><b>ส่งงานแล้ว รอหัวหน้าตรวจ</b><br>ถ้าตรวจไม่ผ่าน งานจะกลับมาให้คุณแก้อีกครั้ง</div></div>';
+      }
+    } else {
+      h += '<div class="note' + (j.reviewStatus === 'passed' ? ' info' : '') + '" style="margin-bottom:13px">' +
+        '<span class="ni">' + (j.reviewStatus === 'passed' ? '✅' : '↩️') + '</span><div>' +
+        '<b>' + rv.label + '</b>' + (by ? ' โดย ' + esc(by.name) : '') +
+        (j.reviewedAt ? ' · ' + thDate(j.reviewedAt.slice(0, 10)) + ' ' + clockOf(j.reviewedAt) : '') +
+        (j.reviewNote ? '<br>"' + esc(j.reviewNote) + '"' : '') +
+        '</div></div>';
+    }
   }
 
   if (j.closedWithoutPhoto) {

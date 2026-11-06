@@ -61,6 +61,10 @@
       childJobId: r.child_job_id || undefined,
       round: r.round || 1,
       closedWithoutPhoto: !!r.closed_without_photo,
+      reviewStatus: r.review_status || 'none',
+      reviewNote: r.review_note || '',
+      reviewedBy: r.reviewed_by || undefined,
+      reviewedAt: r.reviewed_at || undefined,
       arrivedAt: r.arrived_at || undefined, closedAt: r.closed_at || undefined,
       createdAt: r.created_at, updatedAt: r.updated_at
     };
@@ -81,6 +85,10 @@
       child_job_id: o.childJobId || null,
       round: o.round || 1,
       closed_without_photo: !!o.closedWithoutPhoto,
+      review_status: o.reviewStatus || 'none',
+      review_note: o.reviewNote || null,
+      reviewed_by: o.reviewedBy || null,
+      reviewed_at: o.reviewedAt || null,
       arrived_at: o.arrivedAt || null, closed_at: o.closedAt || null
     };
     if (o.id) r.id = o.id;

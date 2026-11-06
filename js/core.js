@@ -79,6 +79,20 @@ const EOM = 32;   // รหัสแทน "สิ้นเดือน" ใน�
 
 const CLOSED = { done: 1, failed: 1 };
 
+/** สถานะการตรวจงาน */
+const REV = {
+  none:     { label: '',              cls: '' },
+  pending:  { label: 'รอตรวจ',        cls: 'st-enroute' },
+  passed:   { label: 'ตรวจผ่าน',      cls: 'st-done'    },
+  rejected: { label: 'ตรวจไม่ผ่าน',   cls: 'st-failed'  }
+};
+
+/** งานที่รอหัวหน้าตรวจ */
+function jobsAwaitingReview() {
+  return S.jobs.filter((j) => j.reviewStatus === 'pending')
+    .sort((a, b) => String(b.closedAt || b.date).localeCompare(String(a.closedAt || a.date)));
+}
+
 /* ======================= ตัวช่วยทั่วไป ======================= */
 
 function esc(s) {
@@ -540,6 +554,7 @@ const ICO = {
   truck:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5h11v9H2zM13 11h4.5l3 3v2.5H13z"/><circle cx="6" cy="18.5" r="1.8"/><circle cx="17" cy="18.5" r="1.8"/></svg>',
   cog:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v2M12 19.5v2M4.2 7l1.7 1M18.1 16l1.7 1M4.2 17l1.7-1M18.1 8l1.7-1"/></svg>',
   dl:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7.5 10.5L12 15l4.5-4.5M4 20h16"/></svg>',
+  check2: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 11.5l2.5 2.5L16 9"/><rect x="3.5" y="4" width="17" height="17" rx="3"/></svg>',
   clock:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3.5 2"/></svg>'
 };
 
@@ -553,10 +568,11 @@ const NAV = {
     { k: 'summary', t: 'สรุป',      i: 'chart' }
   ],
   office: [
-    { k: 'assign',  t: 'จัดงาน',    i: 'grid'  },
-    { k: 'map',     t: 'แผนที่',    i: 'map'   },
-    { k: 'stores',  t: 'ร้านค้า',   i: 'shop'  },
-    { k: 'reports', t: 'รายงาน',    i: 'chart' }
+    { k: 'assign',  t: 'จัดงาน',   i: 'grid'  },
+    { k: 'review',  t: 'ตรวจงาน',  i: 'check2' },
+    { k: 'map',     t: 'แผนที่',   i: 'map'   },
+    { k: 'stores',  t: 'ร้านค้า',  i: 'shop'  },
+    { k: 'reports', t: 'รายงาน',   i: 'chart' }
   ]
 };
 
@@ -568,9 +584,13 @@ function renderNav() {
   const openCount = jobsOfDay(S.date, S.mode === 'driver' ? S.myDriverId : null)
     .filter((j) => !CLOSED[j.status]).length;
 
+  const reviewCount = jobsAwaitingReview().length;
+
   nav.innerHTML = items.map((it) => {
-    const badge = (it.k === 'jobs' || it.k === 'assign') && openCount
-      ? '<span class="nbadge">' + openCount + '</span>' : '';
+    let n = 0;
+    if (it.k === 'jobs' || it.k === 'assign') n = openCount;
+    else if (it.k === 'review') n = reviewCount;
+    const badge = n ? '<span class="nbadge">' + n + '</span>' : '';
     return '<button class="navbtn' + (S.screen === it.k ? ' active' : '') + '" type="button" ' +
       'role="tab" data-act="nav" data-k="' + it.k + '">' +
       ICO[it.i] + badge + '<span>' + it.t + '</span></button>';
@@ -672,6 +692,7 @@ async function render() {
       case 'stores':  el.innerHTML = Views.stores();  break;
       case 'summary': el.innerHTML = Views.summary(); break;
       case 'reports': el.innerHTML = Views.reports(); break;
+      case 'review':  el.innerHTML = Views.review();  break;
       case 'map':     el.innerHTML = MapView.shell(); MapView.mount(); break;
       default:        el.innerHTML = '';
     }

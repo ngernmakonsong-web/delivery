@@ -568,6 +568,14 @@ function photoGateHtml(j, title) {
 
 function hasPhoto(j) { return ((j && j.photos) || []).length > 0; }
 
+/** ปิดงานแล้วเข้าสถานะตรวจอะไร
+ *  คนขับปิด -> รอหัวหน้าตรวจ
+ *  หัวหน้าปิดเอง -> ถือว่าตรวจผ่านแล้วในตัว ไม่ต้องตรวจซ้ำ */
+function reviewStateOnClose() {
+  if (!S.cloud) return 'none';
+  return canSeeOffice() ? 'passed' : 'pending';
+}
+
 ACT['close-ok'] = (el) => {
   const j = jobById(el.dataset.id);
   if (!j) return;
@@ -664,7 +672,11 @@ ACT['close-ok-save'] = async (el) => {
     closedAt: new Date().toISOString(),
     closeNote: val('cNote'),
     events: await pushEvent(j, 'done'),
-    fail: undefined
+    fail: undefined,
+    reviewStatus: reviewStateOnClose(),
+    reviewedBy: canSeeOffice() ? S.myDriverId : undefined,
+    reviewedAt: canSeeOffice() ? new Date().toISOString() : undefined,
+    reviewNote: ''
   });
 
   if (j.type === 'deliver' && j.cod && j.cod.on) {
@@ -784,7 +796,11 @@ ACT['close-fail-save'] = async (el) => {
     closedAt: new Date().toISOString(),
     events: await pushEvent(j, 'failed'),
     fail: { reason: reason, note: val('fNote'), at: new Date().toISOString() },
-    rescheduledTo: resch || undefined
+    rescheduledTo: resch || undefined,
+    reviewStatus: reviewStateOnClose(),
+    reviewedBy: canSeeOffice() ? S.myDriverId : undefined,
+    reviewedAt: canSeeOffice() ? new Date().toISOString() : undefined,
+    reviewNote: ''
   });
 
   let childId = null;
@@ -925,6 +941,88 @@ ACT['job-move-save'] = async (el) => {
   closeSheet(true);
   render();
   toast('ย้ายงานแล้ว', 'ok');
+};
+
+/* ======================= ตรวจงาน ======================= */
+
+ACT['rev-pass'] = async (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+  el.disabled = true;
+  el.innerHTML = '<span class="spin"></span>';
+  try {
+    await DB.jobs.put(Object.assign({}, j, {
+      reviewStatus: 'passed',
+      reviewedBy: S.myDriverId,
+      reviewedAt: new Date().toISOString(),
+      reviewNote: ''
+    }));
+    await reload();
+    closeSheet(true);
+    render();
+    toast('ตรวจผ่านแล้ว', 'ok');
+  } catch (e) {
+    toast('บันทึกไม่สำเร็จ: ' + e.message, 'bad', 4000);
+    el.disabled = false;
+    el.innerHTML = ICO.check + ' ผ่าน';
+  }
+};
+
+ACT['rev-reject'] = (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+  openSheet(
+    sheetHead('ส่งงานกลับไปแก้', j.storeName || '', true) +
+    '<div class="note info" style="margin-bottom:13px"><span class="ni">↩️</span>' +
+    '<div>งานจะกลับไปเป็นสถานะ <b>ถึงร้าน</b> ให้คนขับแก้แล้วปิดงานใหม่ ' +
+    'เขาจะเห็นข้อความที่คุณเขียนไว้</div></div>' +
+    '<div class="f"><div class="f-lab">เหตุผลที่ไม่ผ่าน</div>' +
+    '<div class="pills" id="rvPills">' +
+    ['รูปไม่ชัด', 'รูปไม่ตรงงาน', 'ยอดเงินไม่ตรง', 'ข้อมูลเช็คไม่ครบ',
+     'ไม่ได้ระบุสาเหตุที่ชัดเจน', 'ลืมแนบเอกสาร', 'อื่น ๆ'].map((r) =>
+      '<button type="button" class="pill" data-act="rv-pick" data-r="' + esc(r) + '">' + esc(r) + '</button>').join('') +
+    '</div><input type="hidden" id="rvReason" value=""></div>' +
+    '<div class="f"><label for="rvNote">บอกคนขับว่าต้องแก้อะไร</label>' +
+    '<textarea id="rvNote" placeholder="เช่น ถ่ายรูปใบส่งของให้เห็นเลขที่บิลชัด ๆ อีกรอบ"></textarea></div>' +
+    '<div class="f-err" id="formErr" style="display:none"></div>' +
+    '<button class="btn btn-danger btn-block" type="button" data-act="rev-reject-go" data-id="' + esc(j.id) + '">' +
+    'ส่งกลับให้แก้</button>'
+  );
+};
+
+ACT['rv-pick'] = (el) => {
+  document.getElementById('rvReason').value = el.dataset.r;
+  document.querySelectorAll('#rvPills .pill').forEach((b) => b.classList.toggle('on-bad', b.dataset.r === el.dataset.r));
+  setErr('');
+};
+
+ACT['rev-reject-go'] = async (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+  const reason = val('rvReason');
+  const note = val('rvNote');
+  if (!reason && !note) { setErr('เลือกเหตุผล หรือเขียนบอกคนขับอย่างน้อยหนึ่งอย่าง'); return; }
+
+  el.disabled = true;
+  el.innerHTML = '<span class="spin"></span> กำลังส่งกลับ...';
+  try {
+    await DB.jobs.put(Object.assign({}, j, {
+      status: 'arrived',                 // กลับไปให้คนขับแก้ต่อได้
+      reviewStatus: 'rejected',
+      reviewedBy: S.myDriverId,
+      reviewedAt: new Date().toISOString(),
+      reviewNote: [reason, note].filter(Boolean).join(' — '),
+      events: await pushEvent(j, 'arrived')
+    }));
+    await reload();
+    closeSheet(true);
+    render();
+    toast('ส่งงานกลับให้คนขับแก้แล้ว', 'ok', 3500);
+  } catch (e) {
+    setErr('บันทึกไม่สำเร็จ: ' + e.message);
+    el.disabled = false;
+    el.textContent = 'ส่งกลับให้แก้';
+  }
 };
 
 /* ======================= คำขอย้ายงาน ======================= */
