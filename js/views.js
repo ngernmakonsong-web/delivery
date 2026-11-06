@@ -496,7 +496,8 @@ function jobDetailHtml(j) {
     if (st.address) contactBits.push('<div class="dl-r"><div class="dl-k">ที่อยู่</div><div class="dl-v">' + esc(st.address) + '</div></div>');
     if (st.contactName) contactBits.push('<div class="dl-r"><div class="dl-k">ผู้ติดต่อ</div><div class="dl-v">' + esc(st.contactName) + '</div></div>');
     if (st.phone) contactBits.push('<div class="dl-r"><div class="dl-k">โทร</div><div class="dl-v">' + esc(st.phone) + '</div></div>');
-    if (st.openHours) contactBits.push('<div class="dl-r"><div class="dl-k">เวลารับของ</div><div class="dl-v">' + esc(st.openHours) + '</div></div>');
+    const hrs = hoursLabel(st);
+    if (hrs) contactBits.push('<div class="dl-r"><div class="dl-k">เวลารับของ</div><div class="dl-v">' + esc(hrs) + '</div></div>');
     if (st.note) contactBits.push('<div class="dl-r"><div class="dl-k">หมายเหตุร้าน</div><div class="dl-v">' + esc(st.note) + '</div></div>');
     if (d !== null) contactBits.push('<div class="dl-r"><div class="dl-k">ห่างจากคุณ</div><div class="dl-v">' + distLabel(d) + '</div></div>');
   }
@@ -506,10 +507,13 @@ function jobDetailHtml(j) {
   if (st && st.phone) row.push('<a class="btn" href="' + esc(telUrl(st.phone)) + '">' + ICO.phone + ' โทร</a>');
   if (hasPin) row.push('<a class="btn btn-pri" href="' + esc(navUrl(st.lat, st.lng)) + '" target="_blank" rel="noopener">' + ICO.nav + ' นำทาง</a>');
   if (row.length) h += '<div class="btn-row" style="margin-bottom:13px">' + row.join('') + '</div>';
-  if (st && !hasPin) {
-    h += '<div class="note" style="margin-bottom:13px"><span class="ni">📍</span>' +
-      '<div>ร้านนี้ยังไม่ได้ปักหมุด จึงนำทางให้ไม่ได้ ' +
-      '<button class="btn btn-sm" style="margin-top:7px" type="button" data-act="store-pin-now" data-id="' + esc(st.id) + '">ปักหมุดจากตำแหน่งปัจจุบัน</button></div></div>';
+  if (st) {
+    h += '<div class="note' + (hasPin ? ' info' : '') + '" style="margin-bottom:13px"><span class="ni">📍</span><div>' +
+      (hasPin ? 'หมุดไม่ตรงหน้าร้าน? แก้ได้เลย' : 'ร้านนี้ยังไม่ได้ปักหมุด จึงนำทางให้ไม่ได้') +
+      '<div class="btn-row" style="margin-top:8px">' +
+      '<button class="btn btn-sm" type="button" data-act="pin-map-store" data-id="' + esc(st.id) + '" data-back="jobDetail:' + esc(j.id) + '">เลือกบนแผนที่</button>' +
+      '<button class="btn btn-sm" type="button" data-act="store-pin-now" data-id="' + esc(st.id) + '">ใช้ตำแหน่งที่ยืนอยู่</button>' +
+      '</div></div></div>';
   }
 
   /* ---- รายละเอียดตามประเภทงาน ---- */
@@ -544,7 +548,8 @@ function jobDetailHtml(j) {
       ((b.billRefs || []).length ? '<div class="dl-r"><div class="dl-k">บิลที่วาง</div><div class="dl-v">' + esc(b.billRefs.join(', ')) + '</div></div>' : '') +
       (j.amount ? '<div class="dl-r"><div class="dl-k">ยอดรวม</div><div class="dl-v big tnum">' + money(j.amount) + ' ฿</div></div>' : '') +
       (b.appointmentDate ? '<div class="dl-r"><div class="dl-k">นัดรับเช็ค</div><div class="dl-v">' + thDate(b.appointmentDate) + '</div></div>' : '') +
-      (st && st.billingCycle ? '<div class="dl-r"><div class="dl-k">รอบวางบิล</div><div class="dl-v">' + esc(st.billingCycle) + '</div></div>' : '') +
+      (billingLabel(st) ? '<div class="dl-r"><div class="dl-k">รอบวางบิล</div><div class="dl-v">' + esc(billingLabel(st)) +
+        (billingNoteOf(st) ? '<br><span class="muted" style="font-size:12.5px">' + esc(billingNoteOf(st)) + '</span>' : '') + '</div></div>' : '') +
       '</div>';
     if (b.appointmentDate && j.status === 'done') {
       h += '<button class="btn btn-block" style="margin-bottom:13px" type="button" data-act="job-from-bill" data-id="' + esc(j.id) + '">' +

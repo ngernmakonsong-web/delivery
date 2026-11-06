@@ -42,6 +42,10 @@ const PAY = {
 
 const UNITS = ['ชิ้น', 'ลัง', 'กล่อง', 'แพ็ค', 'ถุง', 'ขวด', 'กระสอบ', 'โหล', 'ชุด', 'กิโลกรัม'];
 
+const WDAY_SHORT = ['อา', 'จ', 'อ', 'พ', 'พฤ', 'ศ', 'ส'];
+const WDAY_FULL = ['อาทิตย์', 'จันทร์', 'อังคาร', 'พุธ', 'พฤหัสบดี', 'ศุกร์', 'เสาร์'];
+const EOM = 32;   // รหัสแทน "สิ้นเดือน" ในรอบวางบิลรายเดือน
+
 const CLOSED = { done: 1, failed: 1 };
 
 /* ======================= ตัวช่วยทั่วไป ======================= */
@@ -159,6 +163,35 @@ function initials(name) {
   } catch (e) {
     return s.slice(0, 2);
   }
+}
+
+/** เวลารับของ: รองรับทั้งแบบใหม่ (เลือกเวลา) และแบบเก่าที่เคยพิมพ์ไว้ */
+function hoursLabel(s) {
+  if (!s) return '';
+  if (s.openFrom && s.openTo) return s.openFrom + ' - ' + s.openTo + ' น.';
+  if (s.openFrom) return 'ตั้งแต่ ' + s.openFrom + ' น.';
+  if (s.openTo) return 'ถึง ' + s.openTo + ' น.';
+  return s.openHours || '';
+}
+
+/** รอบวางบิล: แปลงที่เลือกไว้เป็นข้อความอ่านง่าย */
+function billingLabel(s) {
+  if (!s) return '';
+  const b = s.billing;
+  if (!b || !b.mode || b.mode === 'none') return s.billingCycle || '';
+  const days = (b.days || []).slice().sort((x, y) => x - y);
+  if (!days.length) return s.billingCycle || '';
+  if (b.mode === 'month') {
+    return 'ทุกวันที่ ' + days.map((d) => (d === EOM ? 'สิ้นเดือน' : d)).join(', ');
+  }
+  if (b.mode === 'week') {
+    return 'ทุกวัน' + days.map((d) => WDAY_FULL[d] || '').filter(Boolean).join(', ');
+  }
+  return '';
+}
+
+function billingNoteOf(s) {
+  return (s && s.billing && s.billing.note) || '';
 }
 
 function byteLabel(b) {

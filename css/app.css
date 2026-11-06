@@ -627,6 +627,86 @@ button{ cursor:pointer; border:0; background:none; -webkit-tap-highlight-color:t
 .loadwrap{ display:grid; place-items:center; padding:60px 0 }
 .loadwrap .spin{ border-color:var(--line); border-top-color:var(--brand) }
 
+/* ======================= ตารางวันที่ (รอบวางบิล) ======================= */
+.daygrid{
+  display:grid; grid-template-columns:repeat(7,1fr); gap:5px;
+  background:#fff; border:1px solid var(--line); border-radius:var(--r-s);
+  padding:9px;
+}
+.daygrid button{
+  aspect-ratio:1; min-height:38px;
+  display:grid; place-items:center;
+  border-radius:8px;
+  background:var(--line-2); color:var(--ink-2);
+  font-size:13.5px; font-weight:600;
+  font-variant-numeric:tabular-nums;
+}
+.daygrid button.on{ background:var(--brand); color:#fff }
+.daygrid button.wide{ grid-column:span 3; aspect-ratio:auto; min-height:38px; font-size:13px }
+.wdays{ display:grid; grid-template-columns:repeat(7,1fr); gap:5px }
+.wdays button{
+  min-height:44px; border-radius:8px;
+  background:#fff; border:1px solid var(--line);
+  font-size:13.5px; font-weight:600; color:var(--ink-2);
+}
+.wdays button.on{ background:var(--brand); border-color:var(--brand); color:#fff }
+
+/* ======================= แผนที่สำหรับปักหมุด ======================= */
+.pickmap{
+  position:relative;
+  height:340px; width:100%;
+  border-radius:var(--r); overflow:hidden;
+  border:1px solid var(--line);
+  background:#e7e5df;
+}
+.pickmap .pm-map{ position:absolute; inset:0 }
+.pickmap .pm-cross{
+  position:absolute; left:50%; top:50%;
+  width:1px; height:1px; z-index:600; pointer-events:none;
+}
+.pickmap .pm-locate{
+  position:absolute; right:10px; bottom:10px; z-index:600;
+  width:42px; height:42px; display:grid; place-items:center;
+  border-radius:50%; background:#fff; color:var(--brand);
+  box-shadow:var(--shadow-l);
+}
+.pickmap .pm-tip{
+  position:absolute; left:10px; right:60px; top:10px; z-index:600;
+  background:rgba(17,24,39,.86); color:#fff;
+  font-size:12px; font-weight:500; line-height:1.45;
+  padding:7px 10px; border-radius:9px;
+}
+.pm-coord{
+  display:flex; align-items:center; gap:8px;
+  margin-top:9px; padding:10px 12px;
+  background:#fff; border:1px solid var(--line); border-radius:var(--r-s);
+  font-size:13px;
+}
+.pm-coord .mono{ font-variant-numeric:tabular-nums; font-size:12.5px }
+
+/* ======================= แผงข้อมูลร้านในฟอร์มงาน ======================= */
+.infopanel{
+  margin-top:9px;
+  background:var(--brand-soft);
+  border-radius:var(--r-s);
+  padding:11px 12px;
+  font-size:13px; line-height:1.6;
+}
+.infopanel .ip-t{ font-weight:700; font-size:14px; margin-bottom:3px }
+.infopanel .ip-r{ color:#13463d }
+.infopanel .ip-warn{ color:var(--accent); font-weight:600 }
+.infopanel .ip-hist{
+  margin-top:8px; padding-top:8px;
+  border-top:1px solid rgba(11,79,69,.14);
+}
+.infopanel .ip-h{ font-size:11.5px; font-weight:700; color:#13463d; opacity:.75; margin-bottom:4px }
+.infopanel .ip-j{ display:flex; gap:7px; align-items:baseline; font-size:12.5px; color:#13463d }
+.infopanel .ip-j b{ font-weight:600 }
+.infopanel .ip-btns{ display:flex; gap:7px; flex-wrap:wrap; margin-top:9px }
+.infopanel .ip-btns .btn{ min-height:34px; padding:0 11px; font-size:12.5px; box-shadow:none }
+
+.codebar{ display:grid; grid-template-columns:1fr auto; gap:7px; align-items:start }
+
 @media (min-width:640px){
   #screen{ max-width:620px; margin:0 auto }
   #sheet{ left:50%; transform:translateX(-50%); width:100%; max-width:560px; border-radius:var(--r-l) }

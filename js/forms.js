@@ -81,19 +81,28 @@ function jobFormHtml(j, presetDate) {
       TY[k].ico + ' ' + TY[k].label + '</button>').join('') +
     '</div><input type="hidden" id="jType" value="' + ty + '"></div>';
 
-  /* ร้านค้า */
-  h += '<div class="f"><label for="jStore">ร้านค้า</label>';
+  /* ร้านค้า: คีย์รหัสลูกค้าเพื่อดึงข้อมูลเก่า หรือเลือกจากรายการ */
   if (!S.stores.length) {
-    h += '<div class="note" style="margin-bottom:0"><span class="ni">🏪</span><div>ยังไม่มีร้านในระบบ ' +
+    h += '<div class="f"><div class="f-lab">ร้านค้า</div>' +
+      '<div class="note" style="margin-bottom:0"><span class="ni">🏪</span><div>ยังไม่มีร้านในระบบ ' +
       '<button class="btn btn-sm" style="margin-top:7px" type="button" data-act="store-new-inline">เพิ่มร้านก่อน</button></div></div>' +
-      '<input type="hidden" id="jStore" value="">';
+      '<input type="hidden" id="jStore" value=""></div>';
   } else {
-    h += '<select id="jStore"><option value="">— เลือกร้าน —</option>' +
+    const cur = j.storeId ? storeById(j.storeId) : null;
+    h += '<div class="f"><label for="jCode">รหัสลูกค้า <span class="opt">(คีย์รหัสแล้วดึงข้อมูลเก่ามาให้)</span></label>' +
+      '<div class="codebar">' +
+        '<input type="text" id="jCode" placeholder="เช่น C001" value="' + esc((cur && cur.code) || '') + '">' +
+        '<button class="btn" type="button" data-act="code-find">' + ICO.search + ' ค้นหา</button>' +
+      '</div></div>';
+
+    h += '<div class="f"><label for="jStore">ร้านค้า <span style="color:var(--s-failed)">*</span></label>' +
+      '<select id="jStore" data-chg="store-chosen"><option value="">— เลือกร้าน —</option>' +
       selectOpts(S.stores, j.storeId || '', (s) => s.id, (s) => (s.code ? s.code + ' · ' : '') + s.name) +
       '</select>' +
-      '<div class="f-hint">ไม่มีร้านที่ต้องการ? <button class="btn btn-sm" type="button" data-act="store-new-inline">เพิ่มร้านใหม่</button></div>';
+      '<div class="f-hint">ไม่มีร้านที่ต้องการ? <button class="btn btn-sm" type="button" data-act="store-new-inline">เพิ่มร้านใหม่</button></div>' +
+      '<div id="storePanel">' + (j.storeId ? storePanelHtml(j.storeId, ty) : '') + '</div>' +
+      '</div>';
   }
-  h += '</div>';
 
   /* คนขับ + วันที่ — ต้องระบุคนขับเสมอ */
   h += '<div class="f-2" style="margin-bottom:12px">' +
@@ -171,6 +180,132 @@ function jobFormHtml(j, presetDate) {
   return h;
 }
 
+/* ======================= แผงข้อมูลร้าน + ประวัติเก่า ======================= */
+
+/** แผงที่โผล่ใต้ช่องเลือกร้าน แสดงข้อมูลร้านที่บันทึกไว้และประวัติงานเก่า */
+function storePanelHtml(storeId, jobType) {
+  const s = storeById(storeId);
+  if (!s) return '';
+  const hasPin = s.lat !== undefined && s.lat !== null;
+  const hrs = hoursLabel(s);
+  const bil = billingLabel(s);
+  const bnote = billingNoteOf(s);
+
+  const hist = S.jobs.filter((x) => x.storeId === storeId && CLOSED[x.status])
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const lastSame = S.jobs.filter((x) => x.storeId === storeId && x.type === jobType && x.id)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
+
+  let h = '<div class="infopanel">';
+  h += '<div class="ip-t">' + esc(s.name) + (s.code ? ' <span style="font-weight:500;opacity:.7">· ' + esc(s.code) + '</span>' : '') + '</div>';
+  if (s.address) h += '<div class="ip-r">' + esc(s.address) + '</div>';
+  const line2 = [];
+  if (s.contactName) line2.push(esc(s.contactName));
+  if (s.phone) line2.push(esc(s.phone));
+  if (line2.length) h += '<div class="ip-r">' + line2.join(' · ') + '</div>';
+  if (hrs) h += '<div class="ip-r">รับของ ' + esc(hrs) + '</div>';
+  if (bil) h += '<div class="ip-r">วางบิล ' + esc(bil) + (bnote ? ' · ' + esc(bnote) : '') + '</div>';
+  else if (bnote) h += '<div class="ip-r">วางบิล ' + esc(bnote) + '</div>';
+  if (s.note) h += '<div class="ip-r">' + esc(s.note) + '</div>';
+  h += '<div class="' + (hasPin ? 'ip-r' : 'ip-warn') + '">' +
+    (hasPin ? '📍 ปักหมุดแล้ว' : '📍 ยังไม่ได้ปักหมุด นำทางไม่ได้') + '</div>';
+
+  if (hist.length) {
+    h += '<div class="ip-hist"><div class="ip-h">ประวัติล่าสุด ' + hist.length + ' ครั้ง</div>' +
+      hist.slice(0, 3).map((x) => {
+        const t = TY[x.type] || TY.deliver;
+        const ok = x.status === 'done';
+        return '<div class="ip-j"><span>' + thDate(x.date) + '</span>' +
+          '<b>' + t.label + '</b>' +
+          '<span>' + (ok ? '✓ สำเร็จ' : '✗ ' + ((x.fail && x.fail.reason) || 'ไม่สำเร็จ')) + '</span></div>';
+      }).join('') + '</div>';
+  }
+
+  h += '<div class="ip-btns">';
+  if (lastSame && (((lastSame.items || []).length) || num(lastSame.amount) || (lastSame.pay && lastSame.pay.bank))) {
+    h += '<button class="btn" type="button" data-act="use-last" data-id="' + esc(lastSame.id) + '">ใช้ข้อมูลจากงานล่าสุด</button>';
+  }
+  h += '<button class="btn" type="button" data-act="pin-map-store" data-id="' + esc(s.id) + '" data-back="job">' +
+    (hasPin ? 'แก้หมุด' : 'ปักหมุด') + '</button>';
+  h += '<button class="btn" type="button" data-act="store-edit-inline" data-id="' + esc(s.id) + '">แก้ข้อมูลร้าน</button>';
+  h += '</div></div>';
+  return h;
+}
+
+function refreshStorePanel() {
+  const box = document.getElementById('storePanel');
+  const sel = document.getElementById('jStore');
+  if (!box || !sel) return;
+  box.innerHTML = sel.value ? storePanelHtml(sel.value, val('jType') || 'deliver') : '';
+}
+
+ACT['store-chosen'] = () => {
+  refreshStorePanel();
+  const sel = document.getElementById('jStore');
+  const s = sel && sel.value ? storeById(sel.value) : null;
+  const code = document.getElementById('jCode');
+  if (code && s) code.value = s.code || '';
+  setErr('');
+};
+
+ACT['code-find'] = () => {
+  const q = val('jCode').trim().toLowerCase();
+  if (!q) { setErr('ยังไม่ได้พิมพ์รหัสลูกค้า'); return; }
+  let hit = S.stores.find((s) => String(s.code || '').trim().toLowerCase() === q);
+  if (!hit) hit = S.stores.find((s) => String(s.code || '').trim().toLowerCase().indexOf(q) === 0);
+  if (!hit) hit = S.stores.find((s) => String(s.name || '').toLowerCase().indexOf(q) > -1);
+  if (!hit) {
+    setErr('ไม่พบรหัส "' + val('jCode') + '" ในระบบ ตรวจรหัสอีกครั้ง หรือกดเพิ่มร้านใหม่ด้านล่าง');
+    const box = document.getElementById('storePanel');
+    if (box) box.innerHTML = '';
+    return;
+  }
+  setErr('');
+  const sel = document.getElementById('jStore');
+  sel.value = hit.id;
+  document.getElementById('jCode').value = hit.code || '';
+  refreshStorePanel();
+  toast('ดึงข้อมูล ' + hit.name + ' มาแล้ว', 'ok');
+};
+
+/** คัดลอกรายการสินค้า/ยอด/ธนาคาร จากงานล่าสุดของร้านเดียวกัน */
+ACT['use-last'] = (el) => {
+  const last = jobById(el.dataset.id);
+  if (!last) return;
+  const ty = val('jType') || 'deliver';
+
+  if (ty === 'deliver') {
+    if (num(last.amount)) document.getElementById('jAmount').value = last.amount;
+    const list = document.getElementById('itemList');
+    if (list && (last.items || []).length) {
+      list.innerHTML = last.items.map(itemRow).join('');
+    }
+    if (last.cod && last.cod.on) {
+      const c = document.getElementById('jCod');
+      c.checked = true; ACT['cod-toggle'](c);
+      document.getElementById('jCodAmt').value = last.cod.expected || '';
+    }
+  } else if (ty === 'bill') {
+    if (num(last.amount)) document.getElementById('jBillAmt').value = last.amount;
+    if (last.bill && (last.bill.billRefs || []).length) {
+      document.getElementById('jBillRefs').value = last.bill.billRefs.join(', ');
+    }
+  } else if (ty === 'cheque') {
+    if (last.pay) {
+      if (last.pay.bank) document.getElementById('jBank').value = last.pay.bank;
+      if (num(last.pay.amount)) document.getElementById('jPayAmt').value = last.pay.amount;
+      if ((last.pay.billRefs || []).length) document.getElementById('jPayRefs').value = last.pay.billRefs.join(', ');
+    }
+  }
+  toast('ดึงข้อมูลจากงานวันที่ ' + thDate(last.date) + ' มาแล้ว ปรับแก้ได้', 'ok', 3500);
+};
+
+/** แก้ข้อมูลร้านจากในฟอร์มงาน แล้วกลับมาที่ฟอร์มงานพร้อมค่าเดิม */
+ACT['store-edit-inline'] = (el) => {
+  _jobDraft = readJobForm();
+  openSheet(storeFormHtml(storeById(el.dataset.id), { backable: true, then: 'job' }));
+};
+
 /** อ่านค่าที่กรอกไว้ในฟอร์มงาน เพื่อเก็บไว้ตอนแวะไปเพิ่มร้านใหม่ */
 function readJobForm() {
   if (!document.getElementById('jType')) return null;
@@ -213,6 +348,7 @@ ACT['ty-pick'] = (el) => {
     const blk = document.getElementById('blk-' + x);
     if (blk) blk.style.display = (x === k) ? '' : 'none';
   });
+  refreshStorePanel();   // ปุ่ม "ใช้ข้อมูลจากงานล่าสุด" ขึ้นกับประเภทงาน
 };
 
 ACT['pay-pick'] = (el) => {
@@ -781,8 +917,20 @@ ACT['route-suggest'] = async () => {
 
 /* ======================= ฟอร์มร้านค้า ======================= */
 
+/** ตาราง 1-31 + สิ้นเดือน สำหรับเลือกรอบวางบิลรายเดือน */
+function dayGridHtml(sel) {
+  sel = sel || [];
+  let g = '<div class="daygrid">';
+  for (let d = 1; d <= 31; d++) {
+    g += '<button type="button" class="' + (sel.indexOf(d) > -1 ? 'on' : '') + '" data-act="bc-day" data-d="' + d + '">' + d + '</button>';
+  }
+  g += '<button type="button" class="wide ' + (sel.indexOf(EOM) > -1 ? 'on' : '') + '" data-act="bc-day" data-d="' + EOM + '">สิ้นเดือน</button>';
+  g += '</div>';
+  return g;
+}
+
 function storeFormHtml(s, opts) {
-  const isNew = !s;
+  const isNew = !s || !s.id;
   s = s || {};
   opts = opts || {};
   const hasPin = s.lat !== undefined && s.lat !== null;
@@ -802,15 +950,49 @@ function storeFormHtml(s, opts) {
   h += '<div class="f"><label for="sAddr">ที่อยู่</label>' +
     '<textarea id="sAddr" placeholder="บ้านเลขที่ ถนน ตำบล อำเภอ จังหวัด">' + esc(s.address || '') + '</textarea></div>';
 
-  h += '<div class="f-2" style="margin-bottom:12px">' +
-    '<div class="f"><label for="sContact">ชื่อผู้ติดต่อ</label>' +
-    '<input type="text" id="sContact" value="' + esc(s.contactName || '') + '"></div>' +
-    '<div class="f"><label for="sHours">เวลารับของ</label>' +
-    '<input type="text" id="sHours" value="' + esc(s.openHours || '') + '" placeholder="เช่น 8:00-16:00"></div>' +
+  h += '<div class="f"><label for="sContact">ชื่อผู้ติดต่อ</label>' +
+    '<input type="text" id="sContact" value="' + esc(s.contactName || '') + '"></div>';
+
+  /* ---- เวลารับของ: เลือกเวลา ไม่ต้องพิมพ์ ---- */
+  h += '<div class="f"><div class="f-lab">เวลารับของ</div>' +
+    '<div class="f-2">' +
+      '<div class="f"><label for="sFrom" style="font-size:11.5px;font-weight:500;color:var(--ink-3)">ตั้งแต่</label>' +
+      '<input type="time" id="sFrom" value="' + esc(s.openFrom || '') + '"></div>' +
+      '<div class="f"><label for="sTo" style="font-size:11.5px;font-weight:500;color:var(--ink-3)">ถึง</label>' +
+      '<input type="time" id="sTo" value="' + esc(s.openTo || '') + '"></div>' +
+    '</div>' +
+    (s.openHours && !s.openFrom
+      ? '<div class="f-hint">เดิมบันทึกไว้เป็นข้อความว่า "' + esc(s.openHours) + '" เลือกเวลาด้านบนเพื่อแทนที่</div>'
+      : '<div class="f-hint">เว้นว่างไว้ได้ถ้าร้านไม่กำหนดเวลา</div>') +
     '</div>';
 
-  h += '<div class="f"><label for="sCycle">รอบวางบิล</label>' +
-    '<input type="text" id="sCycle" value="' + esc(s.billingCycle || '') + '" placeholder="เช่น ทุกวันที่ 25 / ทุกศุกร์"></div>';
+  /* ---- รอบวางบิล: กดเลือกวัน ---- */
+  const b = s.billing || {};
+  const bMode = b.mode || 'none';
+  const bDaysM = bMode === 'month' ? (b.days || []) : [];
+  const bDaysW = bMode === 'week' ? (b.days || []) : [];
+
+  h += '<div class="f"><div class="f-lab">รอบวางบิล</div>' +
+    '<div class="seg" id="bcSeg">' +
+      [['none', 'ไม่กำหนด'], ['month', 'ทุกวันที่'], ['week', 'ทุกสัปดาห์']].map((o) =>
+        '<button type="button" class="' + (bMode === o[0] ? 'on' : '') + '" data-act="bc-mode" data-k="' + o[0] + '">' +
+        o[1] + '</button>').join('') +
+    '</div>' +
+    '<input type="hidden" id="sBcMode" value="' + bMode + '">' +
+    '<input type="hidden" id="sBcDaysM" value="' + bDaysM.join(',') + '">' +
+    '<input type="hidden" id="sBcDaysW" value="' + bDaysW.join(',') + '">' +
+
+    '<div id="bcMonth" style="margin-top:9px' + (bMode !== 'month' ? ';display:none' : '') + '">' +
+      dayGridHtml(bDaysM) + '</div>' +
+
+    '<div id="bcWeek" style="margin-top:9px' + (bMode !== 'week' ? ';display:none' : '') + '">' +
+      '<div class="wdays">' + WDAY_SHORT.map((w, i) =>
+        '<button type="button" class="' + (bDaysW.indexOf(i) > -1 ? 'on' : '') + '" data-act="bc-wday" data-d="' + i + '">' +
+        w + '</button>').join('') + '</div></div>' +
+
+    '<div style="margin-top:9px"><input type="text" id="sBcNote" placeholder="หมายเหตุรอบวางบิล เช่น ต้องวางก่อนบ่ายสาม" value="' +
+      esc(billingNoteOf(s) || s.billingCycle || '') + '"></div>' +
+    '</div>';
 
   /* พิกัด */
   h += '<div class="f"><div class="f-lab">พิกัดร้าน (หมุดบนแผนที่)</div>' +
@@ -822,6 +1004,8 @@ function storeFormHtml(s, opts) {
     '</div>' +
     '<input type="hidden" id="sLat" value="' + (hasPin ? s.lat : '') + '">' +
     '<input type="hidden" id="sLng" value="' + (hasPin ? s.lng : '') + '">' +
+    '<button class="btn btn-sm btn-pri btn-block" style="margin-bottom:8px" type="button" data-act="pin-map">' +
+      ICO.map + ' เลือกจุดบนแผนที่ (แม่นที่สุด)</button>' +
     '<button class="btn btn-sm btn-block" style="margin-bottom:8px" type="button" data-act="pin-here">' +
       ICO.locate + ' ใช้ตำแหน่งที่ยืนอยู่ตอนนี้</button>' +
     '<div class="f" style="margin-bottom:0"><label for="sPaste" style="font-size:12px">หรือวางพิกัดจาก Google Maps</label>' +
@@ -849,6 +1033,156 @@ ACT['store-new-inline'] = () => {
   openSheet(storeFormHtml(null, { backable: true, then: 'job' }));
 };
 
+/* ---- รอบวางบิล ---- */
+
+ACT['bc-mode'] = (el) => {
+  const k = el.dataset.k;
+  document.getElementById('sBcMode').value = k;
+  document.querySelectorAll('#bcSeg button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+  document.getElementById('bcMonth').style.display = (k === 'month') ? '' : 'none';
+  document.getElementById('bcWeek').style.display = (k === 'week') ? '' : 'none';
+};
+
+function toggleDayInput(inputId, day, btn) {
+  const inp = document.getElementById(inputId);
+  const cur = String(inp.value || '').split(',').filter(Boolean).map(Number);
+  const i = cur.indexOf(day);
+  if (i > -1) cur.splice(i, 1); else cur.push(day);
+  cur.sort((a, b) => a - b);
+  inp.value = cur.join(',');
+  btn.classList.toggle('on', cur.indexOf(day) > -1);
+}
+
+ACT['bc-day'] = (el) => toggleDayInput('sBcDaysM', Number(el.dataset.d), el);
+ACT['bc-wday'] = (el) => toggleDayInput('sBcDaysW', Number(el.dataset.d), el);
+
+/* ---- ปักหมุดบนแผนที่ ---- */
+
+let _pmMap = null, _pmMarker = null, _pmOnPick = null;
+
+function setPmCoord(ll) {
+  const el = document.getElementById('pmCoord');
+  if (el) el.textContent = ll.lat.toFixed(6) + ', ' + ll.lng.toFixed(6);
+}
+
+function openPinPicker(o) {
+  _pmOnPick = o.onPick;
+  openSheet(
+    sheetHead('ปักหมุดบนแผนที่', o.name || '', true) +
+    '<div class="note info" style="margin-bottom:11px"><span class="ni">👆</span>' +
+    '<div>ซูมเข้าให้ใกล้ที่สุดแล้วแตะตรงหน้าร้าน หรือลากหมุดไปวาง ยิ่งซูมใกล้หมุดยิ่งตรง</div></div>' +
+    '<div class="pickmap">' +
+      '<div class="pm-map" id="pmMap"></div>' +
+      '<div class="pm-tip">แตะบนแผนที่ หรือลากหมุด</div>' +
+      '<button class="pm-locate" type="button" data-act="pm-locate" aria-label="ไปที่ตำแหน่งฉัน">' + ICO.locate + '</button>' +
+    '</div>' +
+    '<div class="pm-coord"><span class="muted">พิกัดที่เลือก</span><span class="mono" id="pmCoord">ยังไม่ได้เลือก</span></div>' +
+    '<button class="btn btn-pri btn-block" style="margin-top:12px" type="button" data-act="pm-ok">ใช้จุดนี้</button>' +
+    '<button class="btn btn-ghost btn-block" style="margin-top:8px" type="button" data-act="sheet-back">ยกเลิก</button>',
+    () => mountPickMap(o)
+  );
+}
+
+function mountPickMap(o) {
+  const el = document.getElementById('pmMap');
+  if (!el || typeof L === 'undefined') {
+    if (el) el.innerHTML = '<div style="padding:22px;text-align:center;color:var(--ink-3)">โหลดแผนที่ไม่ได้ ตรวจสัญญาณอินเทอร์เน็ต</div>';
+    return;
+  }
+  const has = o.lat !== undefined && o.lat !== null && o.lat !== '';
+  const start = has ? [Number(o.lat), Number(o.lng)]
+    : (S.pos ? [S.pos.lat, S.pos.lng] : [13.7563, 100.5018]);
+  const zoom = has ? 18 : (S.pos ? 17 : 12);
+
+  _pmMap = L.map(el, { zoomControl: true, attributionControl: true }).setView(start, zoom);
+  L.tileLayer('https://tile.openstreetmap.org/{z}/{x}/{y}.png', {
+    maxZoom: 19,
+    attribution: '&copy; <a href="https://www.openstreetmap.org/copyright" target="_blank" rel="noopener">OpenStreetMap</a>'
+  }).addTo(_pmMap);
+
+  _pmMarker = L.marker(start, {
+    draggable: true,
+    icon: L.divIcon({
+      className: '',
+      html: '<div class="pin pin-deliver" style="width:32px;height:32px"><span>📍</span></div>',
+      iconSize: [32, 32], iconAnchor: [16, 30]
+    })
+  }).addTo(_pmMap);
+
+  if (has || S.pos) setPmCoord({ lat: start[0], lng: start[1] });
+
+  _pmMarker.on('dragend', () => setPmCoord(_pmMarker.getLatLng()));
+  _pmMap.on('click', (e) => { _pmMarker.setLatLng(e.latlng); setPmCoord(e.latlng); });
+
+  // แผ่นเลื่อนขึ้นมาทีหลัง ต้องบอก Leaflet ให้วัดขนาดใหม่
+  setTimeout(() => { if (_pmMap) _pmMap.invalidateSize(); }, 260);
+  setTimeout(() => { if (_pmMap) _pmMap.invalidateSize(); }, 650);
+}
+
+ACT['pm-locate'] = async (el) => {
+  el.innerHTML = '<span class="spin" style="border-color:var(--line);border-top-color:var(--brand)"></span>';
+  const p = await gpsOnce();
+  el.innerHTML = ICO.locate;
+  if (!p) { toast('หาตำแหน่งไม่ได้ ลองออกมาที่โล่ง', 'bad'); return; }
+  S.pos = p;
+  if (_pmMap && _pmMarker) {
+    _pmMap.setView([p.lat, p.lng], 18);
+    _pmMarker.setLatLng([p.lat, p.lng]);
+    setPmCoord(p);
+  }
+};
+
+ACT['pm-ok'] = () => {
+  if (!_pmMarker) { toast('ยังไม่ได้เลือกจุด', 'bad'); return; }
+  const ll = _pmMarker.getLatLng();
+  const cb = _pmOnPick;
+  if (_pmMap) { _pmMap.remove(); _pmMap = null; _pmMarker = null; }
+  _pmOnPick = null;
+  if (cb) cb(ll.lat, ll.lng);
+};
+
+/** เปิดแผนที่จากในฟอร์มร้าน: เก็บค่าที่กรอกค้างไว้ก่อน แล้วสร้างฟอร์มใหม่พร้อมหมุด */
+ACT['pin-map'] = () => {
+  const draft = readStoreForm();
+  openPinPicker({
+    name: draft.name || 'ร้านใหม่',
+    lat: draft.lat, lng: draft.lng,
+    onPick: (lat, lng) => {
+      closeSheet(true);
+      openSheet(storeFormHtml(Object.assign({}, draft, { lat: lat, lng: lng }), { backable: !!_jobDraft, then: _jobDraft ? 'job' : '' }));
+      toast('ปักหมุดจากแผนที่แล้ว', 'ok');
+    }
+  });
+};
+
+/** แก้หมุดของร้านที่บันทึกแล้ว โดยเซฟลงฐานข้อมูลทันที */
+ACT['pin-map-store'] = (el) => {
+  const s = storeById(el.dataset.id);
+  if (!s) return;
+  const back = el.dataset.back || '';
+  openPinPicker({
+    name: s.name, lat: s.lat, lng: s.lng,
+    onPick: async (lat, lng) => {
+      await DB.stores.put(Object.assign({}, s, { lat: lat, lng: lng }));
+      await reload();
+      closeSheet();
+      toast('แก้หมุดร้าน ' + s.name + ' แล้ว', 'ok');
+      if (back === 'job') {
+        refreshStorePanel();
+      } else if (back === 'store') {
+        closeSheet(true);
+        ACT['store-open']({ dataset: { id: s.id } });
+      } else if (back.indexOf('jobDetail:') === 0) {
+        closeSheet(true);
+        openJob(back.slice(10));
+      } else {
+        closeSheet(true);
+        render();
+      }
+    }
+  });
+};
+
 ACT['pin-here'] = async (el) => {
   el.disabled = true;
   el.innerHTML = '<span class="spin" style="border-color:var(--line);border-top-color:var(--brand)"></span> กำลังหาตำแหน่ง...';
@@ -874,26 +1208,45 @@ ACT['pin-paste'] = (el) => {
     p.lat.toFixed(6) + ', ' + p.lng.toFixed(6) + '</span>';
 };
 
+/** อ่านค่าที่กรอกไว้ในฟอร์มร้าน (ใช้ตอนแวะไปเปิดแผนที่แล้วกลับมา) */
+function readStoreForm() {
+  if (!document.getElementById('sName')) return {};
+  const latS = val('sLat'), lngS = val('sLng');
+  const mode = val('sBcMode') || 'none';
+  const days = mode === 'month' ? val('sBcDaysM') : (mode === 'week' ? val('sBcDaysW') : '');
+  return {
+    id: (document.querySelector('[data-act="store-save"]') || { dataset: {} }).dataset.id || undefined,
+    name: val('sName'),
+    code: val('sCode'),
+    phone: val('sPhone'),
+    address: val('sAddr'),
+    contactName: val('sContact'),
+    openFrom: val('sFrom'),
+    openTo: val('sTo'),
+    billing: {
+      mode: mode,
+      days: String(days || '').split(',').filter(Boolean).map(Number),
+      note: val('sBcNote')
+    },
+    note: val('sNote'),
+    lat: latS === '' ? undefined : Number(latS),
+    lng: lngS === '' ? undefined : Number(lngS)
+  };
+}
+
 ACT['store-save'] = async (el) => {
   const id = el.dataset.id;
   const then = el.dataset.then;
   const name = val('sName');
   if (!name) { setErr('ยังไม่ได้ใส่ชื่อร้าน'); return; }
 
-  const latS = val('sLat'), lngS = val('sLng');
-  const rec = {
-    id: id || undefined,
-    name: name,
-    code: val('sCode'),
-    phone: val('sPhone'),
-    address: val('sAddr'),
-    contactName: val('sContact'),
-    openHours: val('sHours'),
-    billingCycle: val('sCycle'),
-    note: val('sNote'),
-    lat: latS === '' ? undefined : Number(latS),
-    lng: lngS === '' ? undefined : Number(lngS)
-  };
+  const old = id ? storeById(id) : null;
+  const rec = Object.assign({}, readStoreForm(), { id: id || undefined, name: name });
+  // ล้างข้อความรอบวางบิลแบบเก่าทิ้ง เมื่อเลือกแบบใหม่แล้ว
+  if (rec.billing && rec.billing.mode !== 'none') rec.billingCycle = '';
+  else if (old) rec.billingCycle = old.billingCycle;
+  if (rec.openFrom && old) rec.openHours = '';
+  else if (old) rec.openHours = old.openHours;
 
   const saved = await DB.stores.put(rec);
   await reload();
@@ -969,8 +1322,11 @@ ACT['store-open'] = (el) => {
   if (s.address) bits.push('<div class="dl-r"><div class="dl-k">ที่อยู่</div><div class="dl-v">' + esc(s.address) + '</div></div>');
   if (s.contactName) bits.push('<div class="dl-r"><div class="dl-k">ผู้ติดต่อ</div><div class="dl-v">' + esc(s.contactName) + '</div></div>');
   if (s.phone) bits.push('<div class="dl-r"><div class="dl-k">โทร</div><div class="dl-v">' + esc(s.phone) + '</div></div>');
-  if (s.openHours) bits.push('<div class="dl-r"><div class="dl-k">เวลารับของ</div><div class="dl-v">' + esc(s.openHours) + '</div></div>');
-  if (s.billingCycle) bits.push('<div class="dl-r"><div class="dl-k">รอบวางบิล</div><div class="dl-v">' + esc(s.billingCycle) + '</div></div>');
+  const shrs = hoursLabel(s);
+  if (shrs) bits.push('<div class="dl-r"><div class="dl-k">เวลารับของ</div><div class="dl-v">' + esc(shrs) + '</div></div>');
+  const sbil = billingLabel(s), sbn = billingNoteOf(s);
+  if (sbil || sbn) bits.push('<div class="dl-r"><div class="dl-k">รอบวางบิล</div><div class="dl-v">' +
+    esc(sbil || '') + (sbn ? (sbil ? '<br>' : '') + '<span class="muted" style="font-size:12.5px">' + esc(sbn) + '</span>' : '') + '</div></div>');
   if (s.note) bits.push('<div class="dl-r"><div class="dl-k">หมายเหตุ</div><div class="dl-v">' + esc(s.note) + '</div></div>');
   bits.push('<div class="dl-r"><div class="dl-k">หมุด</div><div class="dl-v">' +
     (hasPin ? '<span class="mono" style="font-size:13px">' + Number(s.lat).toFixed(6) + ', ' + Number(s.lng).toFixed(6) + '</span>' : '<span style="color:var(--accent)">ยังไม่ได้ปักหมุด</span>') +
@@ -980,7 +1336,10 @@ ACT['store-open'] = (el) => {
   const row = [];
   if (s.phone) row.push('<a class="btn" href="' + esc(telUrl(s.phone)) + '">' + ICO.phone + ' โทร</a>');
   if (hasPin) row.push('<a class="btn btn-pri" href="' + esc(navUrl(s.lat, s.lng)) + '" target="_blank" rel="noopener">' + ICO.nav + ' นำทาง</a>');
-  if (row.length) h += '<div class="btn-row" style="margin-bottom:13px">' + row.join('') + '</div>';
+  if (row.length) h += '<div class="btn-row" style="margin-bottom:8px">' + row.join('') + '</div>';
+
+  h += '<button class="btn btn-block" style="margin-bottom:13px" type="button" data-act="pin-map-store" data-id="' + esc(s.id) + '" data-back="store">' +
+    ICO.map + (hasPin ? ' แก้หมุดบนแผนที่' : ' ปักหมุดบนแผนที่') + '</button>';
 
   h += '<div class="tiles tiles-3" style="margin-bottom:14px">' +
     tile('งานทั้งหมด', jobs.length) +
