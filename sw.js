@@ -4,7 +4,7 @@
    ข้อมูลงานทั้งหมดอยู่ใน IndexedDB ไม่เกี่ยวกับแคชนี้
    =========================================================== */
 
-const CACHE = 'delivery-v2';
+const CACHE = 'delivery-v3';
 
 const SHELL = [
   './',
@@ -61,8 +61,11 @@ self.addEventListener('fetch', (e) => {
   e.respondWith((async () => {
     const cached = await caches.match(req);
     try {
+      // cache:'no-cache' = ถามเซิร์ฟเวอร์ทุกครั้งว่าไฟล์เปลี่ยนไหม (ได้ 304 ถ้าเหมือนเดิม จึงเบามาก)
+      // จำเป็น เพราะ GitHub Pages สั่งให้เบราว์เซอร์แคชไฟล์ไว้ 10 นาที
+      // ถ้าไม่ใส่ ผู้ใช้จะยังได้โค้ดเก่าแม้จะอัปเดตไปแล้ว
       const res = await Promise.race([
-        fetch(req),
+        fetch(req, { cache: 'no-cache' }),
         new Promise((_, rej) => setTimeout(() => rej(new Error('ช้าเกินไป')), 4000))
       ]);
       if (res && res.status === 200) {
