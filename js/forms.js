@@ -193,7 +193,11 @@ function storePanelHtml(storeId, jobType) {
 
   const hist = S.jobs.filter((x) => x.storeId === storeId && CLOSED[x.status])
     .sort((a, b) => String(b.date).localeCompare(String(a.date)));
-  const lastSame = S.jobs.filter((x) => x.storeId === storeId && x.type === jobType && x.id)
+  // งานล่าสุดของประเภทเดียวกันที่ "มีข้อมูลให้ดึงจริง" ไม่ใช่งานเปล่า
+  const lastSame = S.jobs.filter((x) =>
+    x.storeId === storeId && x.type === jobType &&
+    (((x.items || []).length) || num(x.amount) || (x.pay && x.pay.bank) ||
+     ((x.bill && (x.bill.billRefs || []).length))))
     .sort((a, b) => String(b.date).localeCompare(String(a.date)))[0];
 
   let h = '<div class="infopanel">';
@@ -222,8 +226,9 @@ function storePanelHtml(storeId, jobType) {
   }
 
   h += '<div class="ip-btns">';
-  if (lastSame && (((lastSame.items || []).length) || num(lastSame.amount) || (lastSame.pay && lastSame.pay.bank))) {
-    h += '<button class="btn" type="button" data-act="use-last" data-id="' + esc(lastSame.id) + '">ใช้ข้อมูลจากงานล่าสุด</button>';
+  if (lastSame) {
+    h += '<button class="btn" type="button" data-act="use-last" data-id="' + esc(lastSame.id) + '">' +
+      'ใช้ข้อมูลจาก ' + thDate(lastSame.date) + '</button>';
   }
   h += '<button class="btn" type="button" data-act="pin-map-store" data-id="' + esc(s.id) + '" data-back="job">' +
     (hasPin ? 'แก้หมุด' : 'ปักหมุด') + '</button>';

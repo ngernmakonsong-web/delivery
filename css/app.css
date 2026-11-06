@@ -671,10 +671,11 @@ button{ cursor:pointer; border:0; background:none; -webkit-tap-highlight-color:t
   box-shadow:var(--shadow-l);
 }
 .pickmap .pm-tip{
-  position:absolute; left:10px; right:60px; top:10px; z-index:600;
+  position:absolute; left:10px; right:62px; bottom:10px; z-index:600;
   background:rgba(17,24,39,.86); color:#fff;
   font-size:12px; font-weight:500; line-height:1.45;
   padding:7px 10px; border-radius:9px;
+  pointer-events:none;
 }
 .pm-coord{
   display:flex; align-items:center; gap:8px;
