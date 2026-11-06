@@ -799,3 +799,7 @@ body.auth-mode #screen{ padding:0; min-height:100vh }
 /* ป้ายคำขอย้ายงานบนแถบด้านบน */
 .dchip.tr{ background:var(--accent); color:#fff; font-weight:700 }
 .dchip.tr .dcount{ background:rgba(0,0,0,.22) }
+
+/* งานที่ปิดแล้วและคนขับเปิดดูไม่ได้ */
+.job.is-locked{ opacity:.55 }
+.job.is-locked .job-seq{ background:var(--ink-4) }

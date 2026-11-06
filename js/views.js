@@ -66,9 +66,20 @@ function jobAmount(j) {
   return num(j.amount);
 }
 
+/** งานที่ปิดแล้ว คนขับเปิดดูรายละเอียดไม่ได้ ตรวจได้เฉพาะหัวหน้าและผู้ดูแล */
+function canOpenJob(j) {
+  if (!S.cloud) return true;
+  if (canSeeOffice()) return true;
+  return !CLOSED[j.status];
+}
+
 function jobCard(j, opts) {
   opts = opts || {};
   const t = TY[j.type] || TY.deliver;
+  const openable = canOpenJob(j);
+  const tap = openable
+    ? ' data-act="job-open" data-id="' + esc(j.id) + '"'
+    : ' data-act="job-locked"';
   const st = storeById(j.storeId);
   const name = j.storeName || (st && st.name) || 'ไม่ระบุร้าน';
   const sub = jobSummaryLine(j) || (st && st.address) || '';
@@ -77,16 +88,18 @@ function jobCard(j, opts) {
     ? distKm(S.pos, { lat: st.lat, lng: st.lng }) : null;
   const drv = opts.showDriver ? driverById(j.driverId) : null;
 
-  return '<div class="job' + (j.status === 'done' ? ' is-done' : '') + (j.status === 'failed' ? ' is-failed' : '') + '">' +
-    '<div class="job-seq t-' + j.type + '" data-act="job-open" data-id="' + esc(j.id) + '">' +
+  return '<div class="job' + (j.status === 'done' ? ' is-done' : '') + (j.status === 'failed' ? ' is-failed' : '') +
+    (openable ? '' : ' is-locked') + '">' +
+    '<div class="job-seq t-' + j.type + '"' + tap + '>' +
       '<span>' + (j.seq || '–') + '</span><span class="sq-ico">' + t.ico + '</span>' +
     '</div>' +
-    '<div class="job-body" data-act="job-open" data-id="' + esc(j.id) + '">' +
+    '<div class="job-body"' + tap + '>' +
       '<div class="job-top"><div class="job-name">' + esc(name) + '</div></div>' +
       (sub ? '<div class="job-meta">' + esc(sub) + '</div>' : '') +
       '<div class="job-foot">' +
         chipStatus(j.status) +
         (CLOSED[j.status] && !(j.photos || []).length ? '<span class="chip st-failed">ไม่มีรูป</span>' : '') +
+        (!openable ? '<span class="chip">🔒 ปิดงานแล้ว</span>' : '') +
         (j.cod && j.cod.on ? '<span class="job-cod">เก็บเงิน ' + money(j.cod.expected) + '</span>' : '') +
         (drv ? '<span class="chip">' + esc(drv.name) + '</span>' : '') +
         (d !== null ? '<span class="chip">' + distLabel(d) + '</span>' : '') +
@@ -552,8 +565,10 @@ function jobDetailHtml(j) {
   }
 
   /* ---- รายละเอียดตามประเภทงาน ---- */
+  const editable = !CLOSED[j.status] || canSeeOffice();
   h += '<div class="sec-h"><span class="sec-t">รายละเอียดงาน</span>' +
-    '<button class="btn btn-sm" type="button" data-act="job-edit" data-id="' + esc(j.id) + '">แก้ไข</button></div>';
+    (editable ? '<button class="btn btn-sm" type="button" data-act="job-edit" data-id="' + esc(j.id) + '">แก้ไข</button>' : '') +
+    '</div>';
 
   if (j.type === 'deliver') {
     const its = j.items || [];
@@ -715,13 +730,18 @@ function jobDetailHtml(j) {
   }
 
   if (CLOSED[j.status]) {
-    h += '<button class="btn btn-block" type="button" data-act="job-reopen" data-id="' + esc(j.id) + '">ย้อนสถานะกลับเป็นถึงร้าน</button>';
+    h += canSeeOffice()
+      ? '<button class="btn btn-block" type="button" data-act="job-reopen" data-id="' + esc(j.id) + '">ย้อนสถานะกลับเป็นถึงร้าน</button>'
+      : '<div class="note info"><span class="ni">🔒</span><div>งานนี้ปิดแล้ว ' +
+        'แก้ไขได้เฉพาะหัวหน้างานหรือผู้ดูแลระบบ ถ้าบันทึกผิดให้แจ้งหัวหน้า</div></div>';
   }
-  h += '<div class="btn-row">' +
-    '<button class="btn btn-ghost" type="button" data-act="job-move" data-id="' + esc(j.id) + '">' +
-      (S.cloud && !canSeeOffice() ? 'ขอย้ายงาน' : 'ย้ายคนขับ / วัน') + '</button>' +
-    (canSeeOffice() ? '<button class="btn btn-danger" type="button" data-act="job-del" data-id="' + esc(j.id) + '">ลบงาน</button>' : '') +
-    '</div>';
+  if (editable) {
+    h += '<div class="btn-row">' +
+      '<button class="btn btn-ghost" type="button" data-act="job-move" data-id="' + esc(j.id) + '">' +
+        (S.cloud && !canSeeOffice() ? 'ขอย้ายงาน' : 'ย้ายคนขับ / วัน') + '</button>' +
+      (canSeeOffice() ? '<button class="btn btn-danger" type="button" data-act="job-del" data-id="' + esc(j.id) + '">ลบงาน</button>' : '') +
+      '</div>';
+  }
   h += '</div>';
 
   return h;
@@ -752,8 +772,14 @@ async function renderPhotos(j) {
 }
 
 ACT['job-open'] = (el) => {
+  const j = jobById(el.dataset.id);
+  if (j && !canOpenJob(j)) { ACT['job-locked'](); return; }
   if (sheetOpen()) closeSheet(true);
   openJob(el.dataset.id);
+};
+
+ACT['job-locked'] = () => {
+  toast('งานนี้ปิดแล้ว ดูรายละเอียดและแก้ไขได้เฉพาะหัวหน้างานกับผู้ดูแลระบบ', 'bad', 4200);
 };
 ACT['photo-view'] = (el) => {
   const d = document.createElement('div');

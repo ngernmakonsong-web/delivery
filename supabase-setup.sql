@@ -310,6 +310,24 @@ create policy dp_update on public.driver_positions
   using (driver_id = auth.uid()) with check (driver_id = auth.uid());
 
 -- ------------------------------------------------------------
+--  งานที่ปิดแล้ว ล็อกไม่ให้คนขับแก้
+--  ตรวจงานย้อนหลังได้เฉพาะหัวหน้างานและผู้ดูแลระบบ
+-- ------------------------------------------------------------
+create or replace function public.guard_closed_jobs()
+returns trigger language plpgsql security definer
+set search_path = public as $$
+begin
+  if old.status in ('done','failed') and not public.is_office() then
+    raise exception 'งานที่ปิดแล้วแก้ไขได้เฉพาะหัวหน้างานหรือผู้ดูแลระบบ';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists jobs_guard_closed on public.jobs;
+create trigger jobs_guard_closed before update on public.jobs
+  for each row execute function public.guard_closed_jobs();
+
+-- ------------------------------------------------------------
 -- 7.4) อนุมัติ / ปฏิเสธคำขอย้ายงาน
 --
 --      ต้องเป็น security definer เพราะคนที่อนุมัติคือคนรับงาน

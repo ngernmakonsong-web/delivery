@@ -102,6 +102,24 @@ begin
   end;
 end $$;
 
+-- ------------------------------------------------------------
+--  งานที่ปิดแล้ว ล็อกไม่ให้คนขับแก้
+--  ตรวจงานย้อนหลังได้เฉพาะหัวหน้างานและผู้ดูแลระบบ
+-- ------------------------------------------------------------
+create or replace function public.guard_closed_jobs()
+returns trigger language plpgsql security definer
+set search_path = public as $$
+begin
+  if old.status in ('done','failed') and not public.is_office() then
+    raise exception 'งานที่ปิดแล้วแก้ไขได้เฉพาะหัวหน้างานหรือผู้ดูแลระบบ';
+  end if;
+  return new;
+end $$;
+
+drop trigger if exists jobs_guard_closed on public.jobs;
+create trigger jobs_guard_closed before update on public.jobs
+  for each row execute function public.guard_closed_jobs();
+
 notify pgrst, 'reload schema';
 
 -- 6) ตรวจผล
@@ -114,4 +132,6 @@ select
      where table_schema='public' and table_name='jobs'
        and column_name='closed_without_photo')                          as "ช่องปิดงานไม่มีรูป (ต้องเป็น 1)",
   (select count(*) from pg_policies
-     where schemaname='public' and policyname='profiles_delete')        as "สิทธิ์ลบบัญชี (ต้องเป็น 1)";
+     where schemaname='public' and policyname='profiles_delete')        as "สิทธิ์ลบบัญชี (ต้องเป็น 1)",
+  (select count(*) from pg_trigger
+     where tgname='jobs_guard_closed')                                  as "ล็อกงานที่ปิดแล้ว (ต้องเป็น 1)";
