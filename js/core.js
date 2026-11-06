@@ -249,7 +249,11 @@ const S = {
   jobs: [],
   drivers: [],
   search: '',
-  ready: false
+  ready: false,
+  cloud: false,           // ต่อเซิร์ฟเวอร์กลางอยู่หรือไม่
+  me: null,               // โปรไฟล์ของคนที่ล็อกอิน
+  role: 'admin',          // driver | office | admin
+  positions: []           // ตำแหน่งล่าสุดของคนขับคนอื่น (โหมดคลาวด์)
 };
 
 function activeDriverId() {
@@ -295,7 +299,13 @@ async function reload() {
   S.stores = stores.filter((s) => !s.deleted).sort((a, b) =>
     String(a.name || '').localeCompare(String(b.name || ''), 'th'));
   S.jobs = jobs;
-  S.drivers = drivers.filter((d) => !d.deleted).sort((a, b) => (a.order || 0) - (b.order || 0));
+  S.drivers = drivers.filter((d) => !d.deleted && d.active !== false)
+    .sort((a, b) => (a.order || 0) - (b.order || 0));
+
+  // ตำแหน่งคนขับคนอื่น ดึงเฉพาะตอนออฟฟิศดูแผนที่
+  if (S.cloud && Cloud.isOffice()) {
+    try { S.positions = await Cloud.allPositions(); } catch (e) { S.positions = []; }
+  }
 }
 
 /* ======================= GPS ======================= */
@@ -325,6 +335,8 @@ function gpsStart() {
       };
       setGps('on');
       if (typeof MapView !== 'undefined' && MapView.onPos) MapView.onPos(S.pos);
+      // ส่งตำแหน่งขึ้นเซิร์ฟเวอร์ให้ออฟฟิศเห็น (ตัวเชื่อมจำกัดไว้นาทีละครั้ง)
+      if (S.cloud && typeof Cloud !== 'undefined') Cloud.pushPosition(S.pos);
     },
     (e) => {
       setGps(e.code === 1 ? 'denied' : 'error');
@@ -551,11 +563,33 @@ function renderNav() {
 }
 
 function renderTopbar() {
+  const btnMode = document.getElementById('btnMode');
   document.getElementById('modeLabel').textContent = S.mode === 'driver' ? 'คนขับ' : 'ออฟฟิศ';
   document.getElementById('dateLabel').textContent = dateLabel(S.date);
 
+  // คนขับสลับไปมุมมองออฟฟิศไม่ได้ ปุ่มกลายเป็นชื่อตัวเองที่กดดูบัญชีได้
+  if (!canSeeOffice()) {
+    btnMode.dataset.act = 'users-open';
+    document.getElementById('modeLabel').textContent = S.me ? S.me.name : 'คนขับ';
+  } else {
+    btnMode.dataset.act = 'mode';
+  }
+
   const strip = document.getElementById('driverStrip');
   let html = '';
+
+  if (S.cloud && S.mode === 'driver') {
+    /* คนขับเห็นแค่ของตัวเอง ไม่มีให้สลับคน */
+    const list = jobsOfDay(S.date, S.myDriverId);
+    const p = progressOf(list);
+    html += '<span class="dchip active"><span>' + esc(S.me ? S.me.name : 'ฉัน') + '</span>' +
+      '<span class="dcount">' + p.done + '/' + p.total + '</span></span>';
+    if (S.me && S.me.vehicle) html += '<span class="dchip">' + esc(S.me.vehicle) + '</span>';
+    if (canSeeOffice()) html += '<button class="dchip add" type="button" data-act="mode">ไปมุมมองออฟฟิศ</button>';
+    html += '<button class="dchip add" type="button" data-act="users-open">บัญชีของฉัน</button>';
+    strip.innerHTML = html;
+    return;
+  }
 
   if (S.mode === 'office') {
     const all = jobsOfDay(S.date, null);
@@ -574,7 +608,11 @@ function renderTopbar() {
       '<span class="dcount">' + p.done + '/' + p.total + '</span></button>';
   });
 
-  html += '<button class="dchip add" type="button" data-act="driver-new">+ เพิ่มคนขับ</button>';
+  html += S.cloud
+    ? (canManageUsers()
+        ? '<button class="dchip add" type="button" data-act="user-new">+ เพิ่มบัญชี</button>'
+        : '<button class="dchip add" type="button" data-act="users-open">บัญชีผู้ใช้</button>')
+    : '<button class="dchip add" type="button" data-act="driver-new">+ เพิ่มคนขับ</button>';
   strip.innerHTML = html;
 }
 
@@ -651,6 +689,10 @@ ACT['sheet-close'] = () => closeSheet(true);
 ACT['sheet-back'] = () => closeSheet();
 
 ACT['mode'] = async () => {
+  if (!canSeeOffice()) {
+    toast('บัญชีของคุณเป็นคนขับ จึงเห็นได้เฉพาะงานของตัวเอง', 'bad', 3500);
+    return;
+  }
   S.mode = S.mode === 'driver' ? 'office' : 'driver';
   await DB.meta.set('mode', S.mode);
   const items = NAV[S.mode];
@@ -684,6 +726,7 @@ ACT['date-apply'] = () => {
 ACT['pick-driver'] = async (el) => {
   const id = el.dataset.id || null;
   if (S.mode === 'driver') {
+    if (S.cloud) return;                 // คลาวด์: เป็นตัวเองเสมอ สลับเป็นคนอื่นไม่ได้
     S.myDriverId = id;
     await DB.meta.set('myDriverId', id);
   } else {
@@ -755,30 +798,94 @@ async function boot() {
   document.getElementById('sheetBackdrop').dataset.act = 'sheet-close';
 
   history.pushState(null, '', location.href);
+  registerSW();
 
-  try {
-    await DB.open();
-  } catch (e) {
-    screen.innerHTML = '<div class="empty"><div class="eico">⚠️</div>' +
-      '<h3>เปิดฐานข้อมูลไม่ได้</h3><p>ถ้าเปิดในโหมดไม่ระบุตัวตน (Incognito) ให้เปิดในหน้าต่างปกติแทน</p></div>';
+  const cfg = window.APP_CONFIG || {};
+  S.cloud = !!(cfg.SUPABASE_URL && cfg.SUPABASE_ANON_KEY);
+
+  if (!S.cloud) {
+    /* ---- โหมดเก็บข้อมูลในเครื่อง ไม่มีล็อกอิน ---- */
+    window.DB = LocalDB;
+    try {
+      await DB.open();
+    } catch (e) {
+      screen.innerHTML = '<div class="empty"><div class="eico">⚠️</div>' +
+        '<h3>เปิดฐานข้อมูลไม่ได้</h3><p>ถ้าเปิดในโหมดไม่ระบุตัวตน (Incognito) ให้เปิดในหน้าต่างปกติแทน</p></div>';
+      return;
+    }
+    await startApp();
     return;
   }
 
+  /* ---- โหมดเชื่อมเซิร์ฟเวอร์กลาง ต้องล็อกอิน ---- */
+  const ok = await Cloud.init(cfg.SUPABASE_URL, cfg.SUPABASE_ANON_KEY);
+  if (!ok) {
+    renderAuthError('เชื่อมต่อเซิร์ฟเวอร์ไม่ได้',
+      'โหลดไลบรารีเชื่อมต่อไม่สำเร็จ ตรวจสัญญาณอินเทอร์เน็ตแล้วลองใหม่');
+    return;
+  }
+  window.DB = Cloud;
+
+  let p = null;
+  try { p = await Cloud.loadMe(); } catch (e) { p = null; }
+
+  if (p) {
+    if (p.active === false) {
+      await Cloud.signOut();
+      renderLogin('บัญชีนี้ถูกปิดการใช้งาน ติดต่อผู้ดูแล');
+      return;
+    }
+    await startApp();
+    return;
+  }
+
+  const has = await Cloud.hasAnyAdmin();
+  if (has === null) {
+    renderAuthError('ยังตั้งค่าฐานข้อมูลไม่เสร็จ',
+      'ยังไม่ได้รันสคริปต์สร้างตารางใน Supabase หรือค่าที่ตั้งไว้ไม่ถูกต้อง<br>' +
+      'ให้ผู้ดูแลเปิด Supabase → SQL Editor แล้วรันไฟล์ <b>supabase-setup.sql</b>');
+    return;
+  }
+  if (has) renderLogin(); else renderFirstRun();
+}
+
+/** เริ่มแอปหลังผ่านการยืนยันตัวตนแล้ว (หรือในโหมดเก็บข้อมูลในเครื่อง) */
+async function startApp() {
+  document.body.classList.remove('auth-mode');
+
   S.mode = await DB.meta.get('mode', 'driver');
-  S.myDriverId = await DB.meta.get('myDriverId', null);
   S.basemap = await DB.meta.get('basemap', 'road');
   S.basemapPick = await DB.meta.get('basemapPick', 'sat');
 
-  await reload();
-
-  // สร้างคนขับคนแรกให้ถ้ายังไม่มีเลย
-  if (!S.drivers.length) {
-    await DB.drivers.put({ name: 'ฉัน', vehicle: '', phone: '', order: 1 });
-    await reload();
+  if (S.cloud) {
+    const p = Cloud.current();
+    S.me = p;
+    S.role = p.role;
+    S.myDriverId = p.id;
+    if (!Cloud.isOffice()) S.mode = 'driver';     // คนขับเปิดมุมมองออฟฟิศไม่ได้
+    Cloud.subscribe();
+  } else {
+    S.me = null;
+    S.role = 'admin';                              // โหมดในเครื่อง เปิดได้ทุกอย่าง
+    S.myDriverId = await DB.meta.get('myDriverId', null);
   }
-  if (!S.myDriverId || !driverById(S.myDriverId)) {
-    S.myDriverId = S.drivers[0].id;
-    await DB.meta.set('myDriverId', S.myDriverId);
+
+  try {
+    await reload();
+  } catch (e) {
+    renderAuthError('โหลดข้อมูลไม่ได้', esc(e.message || 'ไม่ทราบสาเหตุ'));
+    return;
+  }
+
+  if (!S.cloud) {
+    if (!S.drivers.length) {
+      await DB.drivers.put({ name: 'ฉัน', vehicle: '', phone: '', order: 1 });
+      await reload();
+    }
+    if (!S.myDriverId || !driverById(S.myDriverId)) {
+      S.myDriverId = S.drivers[0].id;
+      await DB.meta.set('myDriverId', S.myDriverId);
+    }
   }
 
   S.ready = true;
@@ -790,13 +897,18 @@ async function boot() {
   DB.onChange(() => {
     clearTimeout(chgT);
     chgT = setTimeout(async () => {
-      await reload();
+      try { await reload(); } catch (e) { return; }
       if (!sheetOpen()) render();
       else if (S.screen === 'map' && typeof MapView !== 'undefined') MapView.refresh();
-    }, 90);
+    }, 250);
   });
+}
 
-  registerSW();
+function canSeeOffice() {
+  return !S.cloud || (typeof Cloud !== 'undefined' && Cloud.isOffice());
+}
+function canManageUsers() {
+  return S.cloud && typeof Cloud !== 'undefined' && Cloud.isAdmin();
 }
 
 /* เมื่อมีเวอร์ชันใหม่ ให้โหลดหน้าใหม่รอบเดียวโดยอัตโนมัติ

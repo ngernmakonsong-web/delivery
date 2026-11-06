@@ -4,14 +4,17 @@
    ข้อมูลงานทั้งหมดอยู่ใน IndexedDB ไม่เกี่ยวกับแคชนี้
    =========================================================== */
 
-const CACHE = 'delivery-v7';
+const CACHE = 'delivery-v8';
 
 const SHELL = [
   './',
   './index.html',
   './css/app.css',
+  './js/config.js',
   './js/db.js',
+  './js/cloud.js',
   './js/core.js',
+  './js/auth.js',
   './js/views.js',
   './js/forms.js',
   './js/map.js',

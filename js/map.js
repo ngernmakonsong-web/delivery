@@ -153,6 +153,36 @@ const MapView = (function () {
       '</div>';
   }
 
+  let drvLayer = null;
+
+  /** หมุดรถคันอื่น ๆ ให้ออฟฟิศเห็นว่าแต่ละคันอยู่ไหนตอนนี้ */
+  function drawDrivers() {
+    if (!map || !S.cloud || !Cloud.isOffice()) return;
+    if (drvLayer) drvLayer.clearLayers();
+    else drvLayer = L.layerGroup().addTo(map);
+
+    const meId = S.me ? S.me.id : '';
+    (S.positions || []).forEach((p) => {
+      if (!p.lat || p.driverId === meId) return;
+      const d = driverById(p.driverId);
+      if (!d) return;
+      const mins = Math.round((Date.now() - new Date(p.at).getTime()) / 60000);
+      const stale = mins > 10;
+      const m = L.marker([p.lat, p.lng], {
+        icon: L.divIcon({
+          className: '',
+          html: '<div class="drv-dot"' + (stale ? ' style="background:var(--ink-4)"' : '') + '>' +
+            esc(initials(d.name)) + '</div>',
+          iconSize: [30, 26], iconAnchor: [15, 13]
+        }),
+        zIndexOffset: 900
+      });
+      m.bindTooltip(d.name + (d.vehicle ? ' · ' + d.vehicle : '') +
+        '<br>' + (mins < 1 ? 'เมื่อสักครู่' : mins + ' นาทีที่แล้ว'), { direction: 'top' });
+      m.addTo(drvLayer);
+    });
+  }
+
   function drawMe() {
     if (!map || !S.pos) return;
     const ll = [S.pos.lat, S.pos.lng];
@@ -189,6 +219,7 @@ const MapView = (function () {
 
     didFit = false;
     drawJobs();
+    drawDrivers();
     drawMe();
 
     map.on('click', () => {
@@ -201,7 +232,7 @@ const MapView = (function () {
 
   function teardown() {
     if (map) { map.remove(); map = null; }
-    layerJobs = null; meMarker = null; meCircle = null; base = null; didFit = false;
+    layerJobs = null; meMarker = null; meCircle = null; base = null; drvLayer = null; didFit = false;
   }
 
   function setBase(kind) {
@@ -219,6 +250,7 @@ const MapView = (function () {
   function refresh() {
     if (!map) return;
     drawJobs();
+    drawDrivers();
     drawMe();
   }
 

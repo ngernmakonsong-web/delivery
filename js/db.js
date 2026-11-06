@@ -316,5 +316,7 @@
     onChange: function (fn) { listeners.add(fn); return () => listeners.delete(fn); }
   };
 
-  global.DB = DB;
+  // เก็บข้อมูลในเครื่อง ใช้เมื่อยังไม่ได้ต่อฐานข้อมูลกลาง
+  // และใช้เป็นต้นทางตอนย้ายข้อมูลขึ้นคลาวด์
+  global.LocalDB = DB;
 })(window);

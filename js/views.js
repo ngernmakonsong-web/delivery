@@ -457,19 +457,48 @@ Views.reports = function () {
 /* ======================= บล็อกตั้งค่า / สำรองข้อมูล ======================= */
 
 function settingsBlock() {
-  return '<div class="divider"></div>' +
-    '<div class="sec"><div class="sec-h"><span class="sec-t">ข้อมูลและการสำรอง</span></div>' +
-    '<button class="row" type="button" data-act="backup-open">' +
-      '<div class="row-ico">' + ICO.dl + '</div>' +
-      '<div class="row-main"><div class="row-t">สำรองและกู้คืนข้อมูล</div>' +
-      '<div class="row-s">บันทึกเป็นไฟล์เดียว เก็บไว้ใน Google Drive ได้</div></div>' +
-      '<div class="row-x">' + ICO.chev + '</div></button>' +
-    '<button class="row" type="button" data-act="settings-open">' +
-      '<div class="row-ico">' + ICO.cog + '</div>' +
-      '<div class="row-main"><div class="row-t">ตั้งค่าและคนขับ</div>' +
-      '<div class="row-s">' + S.drivers.length + ' คนขับ · ' + S.stores.length + ' ร้าน · ' + S.jobs.length + ' งาน</div></div>' +
-      '<div class="row-x">' + ICO.chev + '</div></button>' +
-    '</div>';
+  let h = '<div class="divider"></div><div class="sec">';
+
+  if (S.cloud) {
+    const role = S.me ? ({ driver: 'คนขับ', office: 'ออฟฟิศ / CS', admin: 'ผู้ดูแล' }[S.me.role] || S.me.role) : '';
+    h += '<div class="sec-h"><span class="sec-t">บัญชีและระบบ</span></div>' +
+      '<button class="row" type="button" data-act="users-open">' +
+        '<div class="row-ico">' + esc(initials(S.me ? S.me.name : '?')) + '</div>' +
+        '<div class="row-main"><div class="row-t">' + esc(S.me ? S.me.name : '') + '</div>' +
+        '<div class="row-s">' + esc((S.me ? S.me.username : '') + ' · ' + role) + '</div></div>' +
+        '<div class="row-x">' + ICO.chev + '</div></button>' +
+      '<div class="note info" style="margin-top:9px"><span class="ni">☁️</span>' +
+      '<div>ข้อมูลเก็บบนเซิร์ฟเวอร์กลาง สำรองอัตโนมัติ มือถือหายหรือเปลี่ยนเครื่อง ' +
+      'ล็อกอินใหม่ก็ได้ข้อมูลครบเหมือนเดิม</div></div>';
+
+    if (typeof LocalDB !== 'undefined') {
+      h += '<button class="row" style="margin-top:9px" type="button" data-act="migrate">' +
+        '<div class="row-ico">' + ICO.up + '</div>' +
+        '<div class="row-main"><div class="row-t">ย้ายข้อมูลเดิมในเครื่องขึ้นเซิร์ฟเวอร์</div>' +
+        '<div class="row-s">สำหรับข้อมูลที่คีย์ไว้ก่อนมีระบบล็อกอิน</div></div>' +
+        '<div class="row-x">' + ICO.chev + '</div></button>';
+    }
+
+    h += '<div class="sec-h" style="margin-top:16px"><span class="sec-t">ส่งออก</span></div>' +
+      '<div class="btn-row">' +
+      '<button class="btn" type="button" data-act="export-jobs">' + ICO.dl + ' งานวันนี้</button>' +
+      '<button class="btn" type="button" data-act="export-jobs-all">' + ICO.dl + ' ทั้งหมด</button>' +
+      '</div>';
+  } else {
+    h += '<div class="sec-h"><span class="sec-t">ข้อมูลและการสำรอง</span></div>' +
+      '<button class="row" type="button" data-act="backup-open">' +
+        '<div class="row-ico">' + ICO.dl + '</div>' +
+        '<div class="row-main"><div class="row-t">สำรองและกู้คืนข้อมูล</div>' +
+        '<div class="row-s">บันทึกเป็นไฟล์เดียว เก็บไว้ใน Google Drive ได้</div></div>' +
+        '<div class="row-x">' + ICO.chev + '</div></button>' +
+      '<button class="row" type="button" data-act="settings-open">' +
+        '<div class="row-ico">' + ICO.cog + '</div>' +
+        '<div class="row-main"><div class="row-t">ตั้งค่าและคนขับ</div>' +
+        '<div class="row-s">' + S.drivers.length + ' คนขับ · ' + S.stores.length + ' ร้าน · ' + S.jobs.length + ' งาน</div></div>' +
+        '<div class="row-x">' + ICO.chev + '</div></button>';
+  }
+
+  return h + '</div>';
 }
 
 /* ======================= รายละเอียดงาน ======================= */
