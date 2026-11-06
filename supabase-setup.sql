@@ -268,32 +268,72 @@ insert into storage.buckets (id, name, public)
 values ('photos', 'photos', true)
 on conflict (id) do nothing;
 
-drop policy if exists photos_read on storage.objects;
-create policy photos_read on storage.objects
-  for select using (bucket_id = 'photos');
+-- นโยบายของ storage ห่อไว้ เพราะบางโปรเจกต์ไม่ให้สิทธิ์แก้ตารางนี้
+-- ถ้าทำไม่ได้ให้ข้ามไป อย่าให้ทั้งสคริปต์ล้ม
+do $$
+begin
+  begin
+    drop policy if exists photos_read on storage.objects;
+    create policy photos_read on storage.objects
+      for select using (bucket_id = 'photos');
+  exception when others then raise notice 'ข้าม photos_read: %', sqlerrm; end;
 
-drop policy if exists photos_insert on storage.objects;
-create policy photos_insert on storage.objects
-  for insert to authenticated with check (bucket_id = 'photos');
+  begin
+    drop policy if exists photos_insert on storage.objects;
+    create policy photos_insert on storage.objects
+      for insert to authenticated with check (bucket_id = 'photos');
+  exception when others then raise notice 'ข้าม photos_insert: %', sqlerrm; end;
 
-drop policy if exists photos_delete on storage.objects;
-create policy photos_delete on storage.objects
-  for delete to authenticated using (bucket_id = 'photos');
+  begin
+    drop policy if exists photos_delete on storage.objects;
+    create policy photos_delete on storage.objects
+      for delete to authenticated using (bucket_id = 'photos');
+  exception when others then raise notice 'ข้าม photos_delete: %', sqlerrm; end;
+end $$;
 
 -- ------------------------------------------------------------
 -- 9) เปิดการแจ้งเตือนแบบสด ให้ออฟฟิศเห็นความเคลื่อนไหวทันที
+--
+--    ส่วนนี้คือสาเหตุที่สคริปต์เคยล้มทั้งไฟล์
+--    ถ้า supabase_realtime ถูกตั้งเป็น FOR ALL TABLES หรือมีตารางอยู่แล้ว
+--    คำสั่ง alter publication จะ error แล้วลากให้ทุกอย่างก่อนหน้าถูกย้อนกลับ
+--    จึงต้องห่อให้พลาดได้โดยไม่กระทบส่วนอื่น
 -- ------------------------------------------------------------
 do $$
+declare
+  t text;
 begin
   if not exists (select 1 from pg_publication where pubname = 'supabase_realtime') then
-    create publication supabase_realtime;
+    begin
+      create publication supabase_realtime;
+    exception when others then raise notice 'สร้าง publication ไม่ได้: %', sqlerrm;
+    end;
   end if;
+
+  foreach t in array array['jobs','stores','driver_positions','profiles'] loop
+    begin
+      execute format('alter publication supabase_realtime add table public.%I', t);
+      raise notice 'เพิ่ม % เข้า realtime แล้ว', t;
+    exception when others then
+      raise notice 'ข้าม % (น่าจะมีอยู่แล้ว): %', t, sqlerrm;
+    end;
+  end loop;
 end $$;
 
-alter publication supabase_realtime add table public.jobs;
-alter publication supabase_realtime add table public.stores;
-alter publication supabase_realtime add table public.driver_positions;
-alter publication supabase_realtime add table public.profiles;
+-- ------------------------------------------------------------
+-- 10) ตรวจผล
+-- ------------------------------------------------------------
+notify pgrst, 'reload schema';
+
+select
+  (select count(*) from information_schema.tables
+     where table_schema = 'public'
+       and table_name in ('profiles','stores','jobs','driver_positions')) as "ตารางที่สร้างได้ (ต้องเป็น 4)",
+  (select count(*) from pg_policies where schemaname = 'public') as "กฎสิทธิ์",
+  (select count(*) from pg_proc p join pg_namespace n on n.oid = p.pronamespace
+     where n.nspname = 'public'
+       and p.proname in ('is_office','is_admin','no_admin_yet','system_initialized')) as "ฟังก์ชัน (ต้องเป็น 4)",
+  (select count(*) from storage.buckets where id = 'photos') as "ถังเก็บรูป (ต้องเป็น 1)";
 
 -- ============================================================
 --  เสร็จแล้ว
