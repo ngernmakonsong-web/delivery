@@ -174,6 +174,12 @@ create policy profiles_update on public.profiles
   using (id = auth.uid() or public.is_admin())
   with check (id = auth.uid() or public.is_admin());
 
+-- ลบบัญชีได้เฉพาะผู้ดูแล และลบบัญชีตัวเองไม่ได้
+drop policy if exists profiles_delete on public.profiles;
+create policy profiles_delete on public.profiles
+  for delete to authenticated
+  using (public.is_admin() and id <> auth.uid());
+
 -- กันคนขับเลื่อนขั้นตัวเองเป็นออฟฟิศ หรือเปิดบัญชีที่ถูกปิดไว้
 create or replace function public.guard_profile_role()
 returns trigger language plpgsql security definer

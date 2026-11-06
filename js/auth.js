@@ -216,7 +216,32 @@ function userFormHtml(u) {
 
     '<div class="f-err" id="formErr" style="display:none"></div>' +
     '<button class="btn btn-pri btn-block" type="button" data-act="user-save" data-id="' + esc(u.id || '') + '">' +
-    (isNew ? 'สร้างบัญชี' : 'บันทึก') + '</button>';
+    (isNew ? 'สร้างบัญชี' : 'บันทึก') + '</button>' +
+
+    (isNew ? '' :
+      '<div class="divider"></div>' +
+      '<div class="note info" style="margin-bottom:11px"><span class="ni">🔑</span>' +
+      '<div><b>ลืมรหัสผ่าน</b> ตั้งใหม่ให้คนอื่นจากในแอปไม่ได้ ' +
+      'ให้ไปที่ Supabase → Authentication → Users → คลิกที่บัญชีนั้น → Reset password<br>' +
+      'หรือจะลบบัญชีนี้แล้วสร้างใหม่ด้วยรหัสใหม่ก็ได้</div></div>' +
+      '<div id="uJobInfo" class="muted" style="font-size:13px;margin-bottom:9px">กำลังนับงานของบัญชีนี้...</div>' +
+      '<button class="btn btn-danger btn-block" type="button" data-act="user-del" data-id="' + esc(u.id) + '" ' +
+      'data-name="' + esc(u.name) + '">ลบบัญชีนี้ถาวร</button>');
+}
+
+/** นับงานของบัญชี แล้วเติมลงในฟอร์มแก้ไข */
+async function fillUserJobInfo(userId) {
+  const box = document.getElementById('uJobInfo');
+  if (!box) return;
+  try {
+    const all = await Cloud.client().from('jobs').select('id,status').eq('driver_id', userId);
+    const list = all.data || [];
+    const open = list.filter((j) => j.status !== 'done' && j.status !== 'failed').length;
+    box.innerHTML = list.length
+      ? 'บัญชีนี้มีงานผูกอยู่ <b>' + list.length + '</b> รายการ (ยังไม่ปิด ' + open + ')' +
+        '<br>ถ้าลบ ต้องเลือกโอนงานให้คนอื่นก่อน'
+      : 'บัญชีนี้ยังไม่มีงานผูกอยู่ ลบได้เลย';
+  } catch (e) { box.textContent = ''; }
 }
 
 function suggestPass() {
@@ -233,7 +258,82 @@ ACT['user-new'] = () => openSheet(userFormHtml(null));
 ACT['user-edit'] = async (el) => {
   const { data } = await Cloud.client().from('profiles').select('*').eq('id', el.dataset.id).maybeSingle();
   if (!data) { toast('ไม่พบบัญชีนี้', 'bad'); return; }
-  openSheet(userFormHtml(data));
+  openSheet(userFormHtml(data), () => fillUserJobInfo(data.id));
+};
+
+/* ---- ลบบัญชี ---- */
+
+ACT['user-del'] = async (el) => {
+  const id = el.dataset.id;
+  const name = el.dataset.name || '';
+  const meId = Cloud.current() ? Cloud.current().id : '';
+
+  if (id === meId) { toast('ลบบัญชีของตัวเองไม่ได้', 'bad', 3500); return; }
+
+  const { data } = await Cloud.client().from('jobs').select('id,status').eq('driver_id', id);
+  const list = data || [];
+  const others = S.drivers.filter((d) => d.id !== id);
+
+  if (list.length && !others.length) {
+    toast('ต้องมีผู้ใช้อื่นอย่างน้อย 1 คนไว้รับโอนงานก่อน', 'bad', 4000);
+    return;
+  }
+
+  let h = sheetHead('ลบบัญชี ' + name + '?', '', true);
+
+  h += '<div class="note" style="margin-bottom:13px"><span class="ni">⚠️</span><div>' +
+    'บัญชีนี้จะเข้าระบบไม่ได้อีก และหายไปจากรายชื่อคนขับ<br>' +
+    '<b>ถ้าแค่อยากพักงานชั่วคราว</b> แนะนำให้กดยกเลิกแล้วติ๊ก "เปิดใช้งานบัญชีนี้" ออกแทน ' +
+    'ซึ่งย้อนกลับได้</div></div>';
+
+  if (list.length) {
+    h += '<div class="f"><label for="delMove">โอนงาน ' + list.length + ' รายการไปให้ใคร</label>' +
+      '<select id="delMove">' +
+      others.map((d) => '<option value="' + esc(d.id) + '">' + esc(d.name) +
+        (d.vehicle ? ' · ' + esc(d.vehicle) : '') + '</option>').join('') +
+      '</select>' +
+      '<div class="f-hint">ประวัติงานเดิมจะยังอยู่ครบ แต่จะแสดงว่าเป็นงานของคนที่รับโอน</div></div>';
+  } else {
+    h += '<p class="muted" style="margin:-4px 0 13px;font-size:13.5px">บัญชีนี้ไม่มีงานผูกอยู่</p>';
+  }
+
+  h += '<div class="note info" style="margin-bottom:13px"><span class="ni">ℹ️</span><div>' +
+    'การเข้าสู่ระบบของบัญชีนี้จะถูกตัดทันที แต่ชื่อผู้ใช้จะยังถูกจองอยู่ในระบบยืนยันตัวตน ' +
+    'ถ้าต้องการใช้ชื่อเดิมซ้ำ ให้ลบที่ Supabase → Authentication → Users ด้วย</div></div>';
+
+  h += '<div class="f-err" id="formErr" style="display:none"></div>' +
+    '<button class="btn btn-danger btn-block" type="button" data-act="user-del-go" ' +
+    'data-id="' + esc(id) + '" data-n="' + list.length + '">ยืนยันลบบัญชี</button>' +
+    '<button class="btn btn-ghost btn-block" style="margin-top:8px" type="button" data-act="sheet-back">ยกเลิก</button>';
+
+  openSheet(h);
+};
+
+ACT['user-del-go'] = async (el) => {
+  const id = el.dataset.id;
+  const n = Number(el.dataset.n || 0);
+  el.disabled = true;
+  el.innerHTML = '<span class="spin"></span> กำลังลบ...';
+  try {
+    if (n) {
+      const to = val('delMove');
+      if (!to) throw new Error('ยังไม่ได้เลือกคนรับโอนงาน');
+      const { error } = await Cloud.client().from('jobs').update({ driver_id: to }).eq('driver_id', id);
+      if (error) throw new Error('โอนงานไม่สำเร็จ: ' + error.message);
+    }
+    const { error: e2 } = await Cloud.client().from('profiles').delete().eq('id', id);
+    if (e2) throw new Error('ลบบัญชีไม่สำเร็จ: ' + e2.message);
+
+    await reload();
+    closeSheet(true);
+    render();
+    toast(n ? 'ลบบัญชีแล้ว โอนงาน ' + n + ' รายการเรียบร้อย' : 'ลบบัญชีแล้ว', 'ok', 3800);
+    ACT['users-open']();
+  } catch (e) {
+    setErr(e.message);
+    el.disabled = false;
+    el.textContent = 'ยืนยันลบบัญชี';
+  }
 };
 
 ACT['user-save'] = async (el) => {
