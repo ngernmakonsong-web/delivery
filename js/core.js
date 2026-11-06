@@ -1,0 +1,647 @@
+/* ===========================================================
+   core.js — ค่าคงที่ ตัวช่วย สถานะแอป GPS และตัวควบคุมหน้าจอ
+   =========================================================== */
+'use strict';
+
+/* ======================= ค่าคงที่ ======================= */
+
+const ST = {
+  pending:  { label: 'รอจัดงาน',        cls: 'st-pending'  },
+  assigned: { label: 'มอบหมายแล้ว',     cls: 'st-assigned' },
+  enroute:  { label: 'กำลังเดินทาง',    cls: 'st-enroute'  },
+  arrived:  { label: 'ถึงร้าน',          cls: 'st-arrived'  },
+  done:     { label: 'ปิดงานสำเร็จ',     cls: 'st-done'     },
+  failed:   { label: 'ปิดงานไม่สำเร็จ',  cls: 'st-failed'   }
+};
+
+const TY = {
+  deliver: { label: 'ส่งสินค้า', short: 'ส่ง',  cls: 'ty-deliver', pin: 'pin-deliver', ico: '📦' },
+  bill:    { label: 'วางบิล',    short: 'บิล',  cls: 'ty-bill',    pin: 'pin-bill',    ico: '📄' },
+  cheque:  { label: 'รับเช็ค',   short: 'เช็ค', cls: 'ty-cheque',  pin: 'pin-cheque',  ico: '💰' }
+};
+
+const FAIL_REASONS = [
+  'ร้านปิด',
+  'ไม่มีคนรับของ',
+  'ลูกค้าปฏิเสธรับ',
+  'ของไม่ครบ / ชำรุด',
+  'ยังไม่ถึงรอบวางบิล',
+  'ไม่มีผู้มีอำนาจเซ็น',
+  'เช็คไม่พร้อม',
+  'ลูกค้าขอเลื่อน',
+  'หาที่อยู่ไม่พบ',
+  'รถเสีย / ส่งไม่ทันเวลา',
+  'อื่น ๆ'
+];
+
+const PAY = {
+  cheque:   { label: 'เช็ค'   },
+  cash:     { label: 'เงินสด' },
+  transfer: { label: 'โอน'    }
+};
+
+const UNITS = ['ชิ้น', 'ลัง', 'กล่อง', 'แพ็ค', 'ถุง', 'ขวด', 'กระสอบ', 'โหล', 'ชุด', 'กิโลกรัม'];
+
+const CLOSED = { done: 1, failed: 1 };
+
+/* ======================= ตัวช่วยทั่วไป ======================= */
+
+function esc(s) {
+  if (s === null || s === undefined) return '';
+  return String(s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;').replace(/'/g, '&#39;');
+}
+
+function isoOf(d) {
+  const y = d.getFullYear();
+  const m = String(d.getMonth() + 1).padStart(2, '0');
+  const dd = String(d.getDate()).padStart(2, '0');
+  return y + '-' + m + '-' + dd;
+}
+function todayISO() { return isoOf(new Date()); }
+function parseISO(s) {
+  if (!s) return null;
+  const p = String(s).split('-').map(Number);
+  if (p.length < 3) return null;
+  return new Date(p[0], p[1] - 1, p[2]);
+}
+function addDays(iso, n) {
+  const d = parseISO(iso) || new Date();
+  d.setDate(d.getDate() + n);
+  return isoOf(d);
+}
+
+function thDate(iso, style) {
+  const d = parseISO(iso);
+  if (!d) return '-';
+  const o = style === 'long'
+    ? { weekday: 'short', day: 'numeric', month: 'long', year: 'numeric' }
+    : { day: 'numeric', month: 'short', year: 'numeric' };
+  try { return d.toLocaleDateString('th-TH', o); }
+  catch (e) { return iso; }
+}
+
+function dateLabel(iso) {
+  const t = todayISO();
+  if (iso === t) return 'วันนี้ ' + thDate(iso);
+  if (iso === addDays(t, -1)) return 'เมื่อวาน ' + thDate(iso);
+  if (iso === addDays(t, 1)) return 'พรุ่งนี้ ' + thDate(iso);
+  return thDate(iso, 'long');
+}
+
+function clockOf(isoDateTime) {
+  if (!isoDateTime) return '';
+  const d = new Date(isoDateTime);
+  if (isNaN(d)) return '';
+  return String(d.getHours()).padStart(2, '0') + ':' + String(d.getMinutes()).padStart(2, '0');
+}
+
+function money(n, dec) {
+  const v = Number(n);
+  if (!isFinite(v)) return '0';
+  return v.toLocaleString('th-TH', {
+    minimumFractionDigits: dec === undefined ? (Number.isInteger(v) ? 0 : 2) : dec,
+    maximumFractionDigits: dec === undefined ? 2 : dec
+  });
+}
+
+function num(v) {
+  const n = parseFloat(String(v === undefined || v === null ? '' : v).replace(/,/g, ''));
+  return isFinite(n) ? n : 0;
+}
+
+function distKm(a, b) {
+  if (!a || !b) return null;
+  const R = 6371;
+  const dLat = (b.lat - a.lat) * Math.PI / 180;
+  const dLng = (b.lng - a.lng) * Math.PI / 180;
+  const la1 = a.lat * Math.PI / 180, la2 = b.lat * Math.PI / 180;
+  const h = Math.sin(dLat / 2) ** 2 + Math.cos(la1) * Math.cos(la2) * Math.sin(dLng / 2) ** 2;
+  return 2 * R * Math.asin(Math.sqrt(h));
+}
+function distLabel(km) {
+  if (km === null || km === undefined) return '';
+  if (km < 1) return Math.round(km * 1000) + ' ม.';
+  return km.toFixed(km < 10 ? 1 : 0) + ' กม.';
+}
+
+/** ดึงพิกัดจากข้อความที่คัดลอกมาจาก Google Maps */
+function parseLatLng(text) {
+  if (!text) return null;
+  const m = String(text).match(/(-?\d{1,2}\.\d{3,})\s*[, ]\s*(-?\d{1,3}\.\d{3,})/);
+  if (!m) return null;
+  const lat = parseFloat(m[1]), lng = parseFloat(m[2]);
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) return null;
+  return { lat: lat, lng: lng };
+}
+
+function navUrl(lat, lng, label) {
+  if (lat === undefined || lat === null) return null;
+  return 'https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lng +
+         '&travelmode=driving' + (label ? '&destination_place_id=' : '');
+}
+
+function telUrl(phone) {
+  if (!phone) return null;
+  return 'tel:' + String(phone).replace(/[^\d+]/g, '');
+}
+
+function initials(name) {
+  const s = String(name || '').trim();
+  if (!s) return '?';
+  return s.slice(0, 2);
+}
+
+function byteLabel(b) {
+  if (b < 1024) return b + ' B';
+  if (b < 1048576) return (b / 1024).toFixed(0) + ' KB';
+  if (b < 1073741824) return (b / 1048576).toFixed(1) + ' MB';
+  return (b / 1073741824).toFixed(2) + ' GB';
+}
+
+/* ======================= สถานะแอป ======================= */
+
+const S = {
+  mode: 'driver',
+  screen: 'jobs',
+  date: todayISO(),
+  myDriverId: null,
+  officeDriverId: null,   // null = ทั้งหมด
+  pos: null,
+  gps: 'off',             // off | getting | on | denied | error
+  keepAwake: false,
+  stores: [],
+  jobs: [],
+  drivers: [],
+  search: '',
+  ready: false
+};
+
+function activeDriverId() {
+  return S.mode === 'driver' ? S.myDriverId : S.officeDriverId;
+}
+
+function driverById(id) {
+  return S.drivers.find((d) => d.id === id) || null;
+}
+function storeById(id) {
+  return S.stores.find((s) => s.id === id) || null;
+}
+function jobById(id) {
+  return S.jobs.find((j) => j.id === id) || null;
+}
+
+/** งานของวันที่เลือก (กรองตามคนขับถ้ามี) เรียงตาม seq */
+function jobsOfDay(date, driverId) {
+  let list = S.jobs.filter((j) => j.date === date);
+  if (driverId) list = list.filter((j) => j.driverId === driverId);
+  return list.sort((a, b) => (a.seq || 0) - (b.seq || 0) || String(a.createdAt).localeCompare(String(b.createdAt)));
+}
+
+function progressOf(list) {
+  const p = { total: list.length, done: 0, failed: 0, open: 0, active: 0 };
+  list.forEach((j) => {
+    if (j.status === 'done') p.done++;
+    else if (j.status === 'failed') p.failed++;
+    else {
+      p.open++;
+      if (j.status === 'enroute' || j.status === 'arrived') p.active++;
+    }
+  });
+  return p;
+}
+
+/* ======================= โหลดข้อมูล ======================= */
+
+async function reload() {
+  const [stores, jobs, drivers] = await Promise.all([
+    DB.stores.all(), DB.jobs.all(), DB.drivers.all()
+  ]);
+  S.stores = stores.filter((s) => !s.deleted).sort((a, b) =>
+    String(a.name || '').localeCompare(String(b.name || ''), 'th'));
+  S.jobs = jobs;
+  S.drivers = drivers.filter((d) => !d.deleted).sort((a, b) => (a.order || 0) - (b.order || 0));
+}
+
+/* ======================= GPS ======================= */
+
+let _watchId = null;
+let _wakeLock = null;
+
+function setGps(state) {
+  S.gps = state;
+  const el = document.getElementById('btnGps');
+  if (!el) return;
+  el.classList.toggle('on', state === 'on');
+  el.classList.toggle('stale', state === 'getting');
+}
+
+function gpsStart() {
+  if (!('geolocation' in navigator)) { setGps('error'); return; }
+  if (_watchId !== null) return;
+  setGps('getting');
+  _watchId = navigator.geolocation.watchPosition(
+    (p) => {
+      S.pos = {
+        lat: p.coords.latitude,
+        lng: p.coords.longitude,
+        acc: p.coords.accuracy,
+        at: new Date().toISOString()
+      };
+      setGps('on');
+      if (typeof MapView !== 'undefined' && MapView.onPos) MapView.onPos(S.pos);
+    },
+    (e) => {
+      setGps(e.code === 1 ? 'denied' : 'error');
+      if (e.code === 1) {
+        toast('ยังไม่ได้อนุญาตให้ใช้ตำแหน่ง กดไอคอนวงกลมมุมขวาบนเพื่อดูวิธีเปิด', 'bad', 5000);
+      }
+    },
+    { enableHighAccuracy: true, maximumAge: 15000, timeout: 25000 }
+  );
+}
+
+function gpsStop() {
+  if (_watchId !== null) { navigator.geolocation.clearWatch(_watchId); _watchId = null; }
+  setGps('off');
+}
+
+function gpsOnce() {
+  return new Promise((res) => {
+    if (!('geolocation' in navigator)) return res(null);
+    navigator.geolocation.getCurrentPosition(
+      (p) => res({ lat: p.coords.latitude, lng: p.coords.longitude, acc: p.coords.accuracy, at: new Date().toISOString() }),
+      () => res(S.pos || null),
+      { enableHighAccuracy: true, timeout: 12000, maximumAge: 5000 }
+    );
+  });
+}
+
+async function toggleKeepAwake(on) {
+  S.keepAwake = on;
+  if (on) {
+    if (!('wakeLock' in navigator)) { toast('เครื่องนี้ไม่รองรับการกันจอดับ', 'bad'); S.keepAwake = false; return false; }
+    try {
+      _wakeLock = await navigator.wakeLock.request('screen');
+      _wakeLock.addEventListener('release', () => { _wakeLock = null; S.keepAwake = false; });
+      return true;
+    } catch (e) { toast('เปิดโหมดกันจอดับไม่ได้', 'bad'); S.keepAwake = false; return false; }
+  }
+  if (_wakeLock) { try { await _wakeLock.release(); } catch (e) {} _wakeLock = null; }
+  return false;
+}
+
+document.addEventListener('visibilitychange', () => {
+  if (document.visibilityState === 'visible') {
+    if (S.keepAwake && !_wakeLock) toggleKeepAwake(true);
+    if (_watchId === null) gpsStart();
+  }
+});
+
+/* ======================= Toast ======================= */
+
+let _toastT = null;
+function toast(msg, kind, ms) {
+  const el = document.getElementById('toast');
+  if (!el) return;
+  el.textContent = msg;
+  el.className = kind || '';
+  clearTimeout(_toastT);
+  _toastT = setTimeout(() => { el.className = 'hidden'; }, ms || 2600);
+}
+
+/* ======================= Sheet ======================= */
+
+const _sheetStack = [];
+
+function openSheet(html, onMount) {
+  const wrap = document.getElementById('sheetWrap');
+  const body = document.getElementById('sheetBody');
+  _sheetStack.push({ html: html, onMount: onMount });
+  body.innerHTML = html;
+  body.scrollTop = 0;
+  wrap.classList.remove('hidden');
+  document.body.style.overflow = 'hidden';
+  if (onMount) onMount(body);
+}
+
+function replaceSheet(html, onMount) {
+  if (_sheetStack.length) _sheetStack.pop();
+  openSheet(html, onMount);
+}
+
+function closeSheet(all) {
+  const wrap = document.getElementById('sheetWrap');
+  const body = document.getElementById('sheetBody');
+  _sheetStack.pop();
+  if (all) _sheetStack.length = 0;
+  if (!_sheetStack.length) {
+    wrap.classList.add('hidden');
+    body.innerHTML = '';
+    document.body.style.overflow = '';
+    return;
+  }
+  const top = _sheetStack[_sheetStack.length - 1];
+  body.innerHTML = top.html;
+  if (top.onMount) top.onMount(body);
+}
+
+function sheetOpen() { return _sheetStack.length > 0; }
+
+function sheetHead(title, sub, backable) {
+  return '<div class="sh-h">' +
+    '<div class="sh-t"><h2>' + esc(title) + '</h2>' +
+    (sub ? '<p>' + esc(sub) + '</p>' : '') + '</div>' +
+    '<button class="sh-close" type="button" data-act="' + (backable ? 'sheet-back' : 'sheet-close') + '" aria-label="ปิด">' +
+    (backable
+      ? '<svg viewBox="0 0 20 20" width="18" height="18"><path d="M12 4l-6 6 6 6" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>'
+      : '<svg viewBox="0 0 20 20" width="18" height="18"><path d="M5 5l10 10M15 5L5 15" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"/></svg>') +
+    '</button></div>';
+}
+
+/* ======================= ไอคอน ======================= */
+
+const ICO = {
+  list:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><path d="M8 6h13M8 12h13M8 18h13M3.5 6h.01M3.5 12h.01M3.5 18h.01"/></svg>',
+  map:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 3L3 5.5v15L9 18l6 3 6-2.5v-15L15 6 9 3z"/><path d="M9 3v15M15 6v15"/></svg>',
+  shop:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 9.5L4.5 4h15L21 9.5M3 9.5h18M3 9.5V20h18V9.5M9 20v-6h6v6"/></svg>',
+  chart:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 20V10M10 20V4M16 20v-7M22 20H2"/></svg>',
+  grid:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="3" width="7" height="7" rx="1.5"/><rect x="14" y="3" width="7" height="7" rx="1.5"/><rect x="3" y="14" width="7" height="7" rx="1.5"/><rect x="14" y="14" width="7" height="7" rx="1.5"/></svg>',
+  plus:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M12 5v14M5 12h14"/></svg>',
+  chev:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 5l7 7-7 7"/></svg>',
+  up:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 14l6-6 6 6"/></svg>',
+  down:   '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M6 10l6 6 6-6"/></svg>',
+  search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="11" cy="11" r="7"/><path d="M16.5 16.5L21 21"/></svg>',
+  phone:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 3h3.5l2 5-2.5 1.5a12 12 0 006.5 6.5L16 13.5l5 2V19a2 2 0 01-2.2 2A16 16 0 013 5.2A2 2 0 015 3z"/></svg>',
+  nav:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11l18-8-8 18-2-8-8-2z"/></svg>',
+  cam:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 8.5A2 2 0 015 6.5h1.8l1.2-2h8l1.2 2H19a2 2 0 012 2V18a2 2 0 01-2 2H5a2 2 0 01-2-2V8.5z"/><circle cx="12" cy="13" r="3.4"/></svg>',
+  pin:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 21s7-6.2 7-11a7 7 0 10-14 0c0 4.8 7 11 7 11z"/><circle cx="12" cy="10" r="2.6"/></svg>',
+  locate: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><circle cx="12" cy="12" r="3"/><circle cx="12" cy="12" r="8"/><path d="M12 1v3M12 20v3M1 12h3M20 12h3"/></svg>',
+  fit:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9V5.5A1.5 1.5 0 015.5 4H9M15 4h3.5A1.5 1.5 0 0120 5.5V9M20 15v3.5a1.5 1.5 0 01-1.5 1.5H15M9 20H5.5A1.5 1.5 0 014 18.5V15"/></svg>',
+  check:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M4 12.5l5 5L20 6.5"/></svg>',
+  x:      '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.3" stroke-linecap="round"><path d="M6 6l12 12M18 6L6 18"/></svg>',
+  truck:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M2 7.5h11v9H2zM13 11h4.5l3 3v2.5H13z"/><circle cx="6" cy="18.5" r="1.8"/><circle cx="17" cy="18.5" r="1.8"/></svg>',
+  cog:    '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3"/><path d="M12 2.5v2M12 19.5v2M4.2 7l1.7 1M18.1 16l1.7 1M4.2 17l1.7-1M18.1 8l1.7-1"/></svg>',
+  dl:     '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12M7.5 10.5L12 15l4.5-4.5M4 20h16"/></svg>',
+  clock:  '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="9"/><path d="M12 7.5V12l3.5 2"/></svg>'
+};
+
+/* ======================= Nav ======================= */
+
+const NAV = {
+  driver: [
+    { k: 'jobs',    t: 'งานวันนี้', i: 'list'  },
+    { k: 'map',     t: 'แผนที่',    i: 'map'   },
+    { k: 'stores',  t: 'ร้านค้า',   i: 'shop'  },
+    { k: 'summary', t: 'สรุป',      i: 'chart' }
+  ],
+  office: [
+    { k: 'assign',  t: 'จัดงาน',    i: 'grid'  },
+    { k: 'map',     t: 'แผนที่',    i: 'map'   },
+    { k: 'stores',  t: 'ร้านค้า',   i: 'shop'  },
+    { k: 'reports', t: 'รายงาน',    i: 'chart' }
+  ]
+};
+
+function renderNav() {
+  const nav = document.getElementById('nav');
+  const items = NAV[S.mode];
+  if (!items.some((i) => i.k === S.screen)) S.screen = items[0].k;
+
+  const openCount = jobsOfDay(S.date, S.mode === 'driver' ? S.myDriverId : null)
+    .filter((j) => !CLOSED[j.status]).length;
+
+  nav.innerHTML = items.map((it) => {
+    const badge = (it.k === 'jobs' || it.k === 'assign') && openCount
+      ? '<span class="nbadge">' + openCount + '</span>' : '';
+    return '<button class="navbtn' + (S.screen === it.k ? ' active' : '') + '" type="button" ' +
+      'role="tab" data-act="nav" data-k="' + it.k + '">' +
+      ICO[it.i] + badge + '<span>' + it.t + '</span></button>';
+  }).join('');
+}
+
+function renderTopbar() {
+  document.getElementById('modeLabel').textContent = S.mode === 'driver' ? 'คนขับ' : 'ออฟฟิศ';
+  document.getElementById('dateLabel').textContent = dateLabel(S.date);
+
+  const strip = document.getElementById('driverStrip');
+  let html = '';
+
+  if (S.mode === 'office') {
+    const all = jobsOfDay(S.date, null);
+    html += '<button class="dchip' + (!S.officeDriverId ? ' active' : '') + '" type="button" ' +
+      'data-act="pick-driver" data-id=""><span>ทั้งหมด</span>' +
+      '<span class="dcount">' + all.length + '</span></button>';
+  }
+
+  S.drivers.forEach((d) => {
+    const list = jobsOfDay(S.date, d.id);
+    const p = progressOf(list);
+    const active = S.mode === 'driver' ? S.myDriverId === d.id : S.officeDriverId === d.id;
+    html += '<button class="dchip' + (active ? ' active' : '') + '" type="button" ' +
+      'data-act="pick-driver" data-id="' + esc(d.id) + '">' +
+      '<span>' + esc(d.name) + '</span>' +
+      '<span class="dcount">' + p.done + '/' + p.total + '</span></button>';
+  });
+
+  html += '<button class="dchip add" type="button" data-act="driver-new">+ เพิ่มคนขับ</button>';
+  strip.innerHTML = html;
+}
+
+/* ======================= Router ======================= */
+
+let _rendering = false;
+
+async function render() {
+  if (_rendering) return;
+  _rendering = true;
+  try {
+    renderTopbar();
+    renderNav();
+    const el = document.getElementById('screen');
+    el.classList.toggle('nopad', S.screen === 'map');
+
+    if (S.screen !== 'map' && typeof MapView !== 'undefined') MapView.teardown();
+
+    switch (S.screen) {
+      case 'jobs':    el.innerHTML = Views.jobs();    break;
+      case 'assign':  el.innerHTML = Views.assign();  break;
+      case 'stores':  el.innerHTML = Views.stores();  break;
+      case 'summary': el.innerHTML = Views.summary(); break;
+      case 'reports': el.innerHTML = Views.reports(); break;
+      case 'map':     el.innerHTML = MapView.shell(); MapView.mount(); break;
+      default:        el.innerHTML = '';
+    }
+  } finally {
+    _rendering = false;
+  }
+}
+
+function go(screen) {
+  S.screen = screen;
+  render();
+}
+
+/* ======================= Event delegation ======================= */
+
+const ACT = {};
+
+document.addEventListener('click', (e) => {
+  const el = e.target.closest('[data-act]');
+  if (!el) return;
+  const fn = ACT[el.dataset.act];
+  if (!fn) return;
+  e.preventDefault();
+  fn(el, e);
+});
+
+document.addEventListener('change', (e) => {
+  const el = e.target.closest('[data-chg]');
+  if (!el) return;
+  const fn = ACT[el.dataset.chg];
+  if (fn) fn(el, e);
+});
+
+document.addEventListener('input', (e) => {
+  const el = e.target.closest('[data-inp]');
+  if (!el) return;
+  const fn = ACT[el.dataset.inp];
+  if (fn) fn(el, e);
+});
+
+/* ปิด sheet ด้วยปุ่มย้อนกลับของเครื่อง */
+window.addEventListener('popstate', () => {
+  if (sheetOpen()) { closeSheet(); history.pushState(null, '', location.href); }
+});
+
+/* ======================= actions: nav / topbar ======================= */
+
+ACT['nav'] = (el) => go(el.dataset.k);
+ACT['sheet-close'] = () => closeSheet(true);
+ACT['sheet-back'] = () => closeSheet();
+
+ACT['mode'] = async () => {
+  S.mode = S.mode === 'driver' ? 'office' : 'driver';
+  await DB.meta.set('mode', S.mode);
+  const items = NAV[S.mode];
+  if (!items.some((i) => i.k === S.screen)) S.screen = items[0].k;
+  render();
+};
+
+ACT['date-prev'] = () => { S.date = addDays(S.date, -1); render(); };
+ACT['date-next'] = () => { S.date = addDays(S.date, 1); render(); };
+
+ACT['date-pick'] = () => {
+  openSheet(
+    sheetHead('เลือกวันที่') +
+    '<div class="f"><label for="dp">วันที่</label>' +
+    '<input type="date" id="dp" value="' + S.date + '"></div>' +
+    '<div class="btn-row" style="margin-bottom:10px">' +
+    '<button class="btn btn-sm" type="button" data-act="date-set" data-d="' + addDays(todayISO(), -1) + '">เมื่อวาน</button>' +
+    '<button class="btn btn-sm" type="button" data-act="date-set" data-d="' + todayISO() + '">วันนี้</button>' +
+    '<button class="btn btn-sm" type="button" data-act="date-set" data-d="' + addDays(todayISO(), 1) + '">พรุ่งนี้</button>' +
+    '</div>' +
+    '<button class="btn btn-pri btn-block" type="button" data-act="date-apply">ดูวันนี้</button>'
+  );
+};
+ACT['date-set'] = (el) => { S.date = el.dataset.d; closeSheet(true); render(); };
+ACT['date-apply'] = () => {
+  const v = document.getElementById('dp').value;
+  if (v) S.date = v;
+  closeSheet(true); render();
+};
+
+ACT['pick-driver'] = async (el) => {
+  const id = el.dataset.id || null;
+  if (S.mode === 'driver') {
+    S.myDriverId = id;
+    await DB.meta.set('myDriverId', id);
+  } else {
+    S.officeDriverId = id;
+  }
+  render();
+};
+
+ACT['gps-info'] = () => {
+  const map = {
+    off:     ['ยังไม่เปิดตำแหน่ง', 'กดปุ่มด้านล่างเพื่อขออนุญาตใช้ตำแหน่ง'],
+    getting: ['กำลังหาตำแหน่ง', 'รอสักครู่ ถ้าอยู่ในอาคารอาจใช้เวลาหรือคลาดเคลื่อน'],
+    on:      ['ตำแหน่งทำงานปกติ', S.pos ? 'ความคลาดเคลื่อนประมาณ ' + Math.round(S.pos.acc) + ' เมตร อัปเดตล่าสุด ' + clockOf(S.pos.at) : ''],
+    denied:  ['ถูกปฏิเสธสิทธิ์ตำแหน่ง', 'เปิดใหม่ได้ที่ไอคอนรูปกุญแจหรือ (i) ข้างแถบที่อยู่เว็บ แล้วเลือกอนุญาตตำแหน่ง จากนั้นรีโหลดหน้า'],
+    error:   ['หาตำแหน่งไม่ได้', 'ตรวจว่าเปิด GPS ของเครื่องไว้แล้ว และเปิดเว็บนี้ผ่าน https']
+  };
+  const [t, s] = map[S.gps] || map.off;
+  openSheet(
+    sheetHead(t, s) +
+    (S.pos
+      ? '<div class="dl">' +
+        '<div class="dl-r"><div class="dl-k">พิกัด</div><div class="dl-v mono">' + S.pos.lat.toFixed(6) + ', ' + S.pos.lng.toFixed(6) + '</div></div>' +
+        '<div class="dl-r"><div class="dl-k">คลาดเคลื่อน</div><div class="dl-v">± ' + Math.round(S.pos.acc) + ' เมตร</div></div>' +
+        '<div class="dl-r"><div class="dl-k">อัปเดต</div><div class="dl-v">' + clockOf(S.pos.at) + '</div></div>' +
+        '</div>'
+      : '') +
+    '<label class="check" style="margin-bottom:10px">' +
+    '<input type="checkbox" ' + (S.keepAwake ? 'checked' : '') + ' data-chg="keepawake">' +
+    '<span>กันจอดับระหว่างวิ่งงาน<br><span class="muted" style="font-size:12px">เปิดไว้เมื่อตั้งมือถือที่แท่นหน้ารถ ตำแหน่งจะส่งต่อเนื่อง</span></span>' +
+    '</label>' +
+    '<button class="btn btn-pri btn-block" type="button" data-act="gps-retry">ขอตำแหน่งอีกครั้ง</button>'
+  );
+};
+ACT['gps-retry'] = async () => {
+  gpsStop(); gpsStart();
+  const p = await gpsOnce();
+  if (p) { S.pos = p; setGps('on'); toast('ได้ตำแหน่งแล้ว', 'ok'); closeSheet(true); }
+};
+ACT['keepawake'] = (el) => { toggleKeepAwake(el.checked); };
+
+/* ======================= Boot ======================= */
+
+async function boot() {
+  const screen = document.getElementById('screen');
+  screen.innerHTML = '<div class="loadwrap"><div class="spin"></div></div>';
+
+  document.getElementById('btnMode').dataset.act = 'mode';
+  document.getElementById('btnDatePrev').dataset.act = 'date-prev';
+  document.getElementById('btnDateNext').dataset.act = 'date-next';
+  document.getElementById('btnDate').dataset.act = 'date-pick';
+  document.getElementById('btnGps').dataset.act = 'gps-info';
+  document.getElementById('sheetBackdrop').dataset.act = 'sheet-close';
+
+  history.pushState(null, '', location.href);
+
+  try {
+    await DB.open();
+  } catch (e) {
+    screen.innerHTML = '<div class="empty"><div class="eico">⚠️</div>' +
+      '<h3>เปิดฐานข้อมูลไม่ได้</h3><p>ถ้าเปิดในโหมดไม่ระบุตัวตน (Incognito) ให้เปิดในหน้าต่างปกติแทน</p></div>';
+    return;
+  }
+
+  S.mode = await DB.meta.get('mode', 'driver');
+  S.myDriverId = await DB.meta.get('myDriverId', null);
+
+  await reload();
+
+  // สร้างคนขับคนแรกให้ถ้ายังไม่มีเลย
+  if (!S.drivers.length) {
+    await DB.drivers.put({ name: 'ฉัน', vehicle: '', phone: '', order: 1 });
+    await reload();
+  }
+  if (!S.myDriverId || !driverById(S.myDriverId)) {
+    S.myDriverId = S.drivers[0].id;
+    await DB.meta.set('myDriverId', S.myDriverId);
+  }
+
+  S.ready = true;
+  gpsStart();
+  await render();
+
+  DB.onChange(async () => { await reload(); if (!sheetOpen()) render(); });
+
+  if ('serviceWorker' in navigator) {
+    navigator.serviceWorker.register('sw.js').catch(() => {});
+  }
+}
+
+document.addEventListener('DOMContentLoaded', boot);

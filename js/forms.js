@@ -1,0 +1,1349 @@
+/* ===========================================================
+   forms.js — ฟอร์มสร้าง/แก้ไข ปิดงาน รูปถ่าย สำรองข้อมูล ส่งออก
+   =========================================================== */
+'use strict';
+
+/* ======================= ตัวช่วยฟอร์ม ======================= */
+
+function val(id) {
+  const el = document.getElementById(id);
+  return el ? String(el.value || '').trim() : '';
+}
+function checked(id) {
+  const el = document.getElementById(id);
+  return !!(el && el.checked);
+}
+function setErr(msg) {
+  const el = document.getElementById('formErr');
+  if (el) { el.textContent = msg || ''; el.style.display = msg ? 'block' : 'none'; }
+}
+
+function confirmSheet(title, text, okLabel, danger, onOk) {
+  openSheet(
+    sheetHead(title) +
+    '<p style="margin:-8px 0 16px;font-size:14.5px;line-height:1.65">' + text + '</p>' +
+    '<div class="btn-row">' +
+    '<button class="btn btn-ghost" type="button" data-act="sheet-back">ยกเลิก</button>' +
+    '<button class="btn ' + (danger ? 'btn-danger' : 'btn-pri') + '" type="button" id="cfmOk">' + esc(okLabel) + '</button>' +
+    '</div>',
+    (body) => {
+      body.querySelector('#cfmOk').addEventListener('click', async () => {
+        closeSheet();
+        await onOk();
+      });
+    }
+  );
+}
+
+function selectOpts(list, sel, keyF, labF) {
+  return list.map((o) => {
+    const k = keyF(o);
+    return '<option value="' + esc(k) + '"' + (k === sel ? ' selected' : '') + '>' + esc(labF(o)) + '</option>';
+  }).join('');
+}
+
+function dateInput(id, label, value, hint) {
+  return '<div class="f"><label for="' + id + '">' + esc(label) + '</label>' +
+    '<input type="date" id="' + id + '" value="' + esc(value || '') + '">' +
+    (hint ? '<div class="f-hint">' + hint + '</div>' : '') + '</div>';
+}
+
+/* ======================= ฟอร์มงาน ======================= */
+
+function itemRow(it) {
+  it = it || { name: '', qty: '', unit: 'ชิ้น' };
+  return '<div class="item">' +
+    '<input type="text" class="it-name" placeholder="ชื่อสินค้า" value="' + esc(it.name) + '">' +
+    '<input type="number" class="it-qty" inputmode="decimal" placeholder="จำนวน" value="' + esc(it.qty) + '">' +
+    '<input type="text" class="it-unit" list="unitList" placeholder="หน่วย" value="' + esc(it.unit || '') + '">' +
+    '<button class="rm" type="button" data-act="item-rm" aria-label="ลบรายการ">' + ICO.x + '</button>' +
+    '</div>';
+}
+
+function jobFormHtml(j, presetDate) {
+  const isNew = !j;
+  j = j || {};
+  const ty = j.type || 'deliver';
+  const cod = j.cod || {};
+  const bill = j.bill || {};
+  const pay = j.pay || {};
+  const items = (j.items && j.items.length) ? j.items : [{ name: '', qty: '', unit: 'ชิ้น' }];
+  const date = j.date || presetDate || S.date;
+  const driverId = j.driverId !== undefined ? j.driverId : (activeDriverId() || (S.drivers[0] && S.drivers[0].id) || '');
+
+  let h = sheetHead(isNew ? 'สร้างงานใหม่' : 'แก้ไขงาน', isNew ? '' : (j.storeName || ''));
+
+  h += '<datalist id="unitList">' + UNITS.map((u) => '<option value="' + u + '">').join('') + '</datalist>';
+
+  h += '<div class="f"><div class="f-lab">ประเภทงาน</div><div class="seg" id="tySeg">' +
+    Object.keys(TY).map((k) =>
+      '<button type="button" class="' + (k === ty ? 'on' : '') + '" data-act="ty-pick" data-k="' + k + '">' +
+      TY[k].ico + ' ' + TY[k].label + '</button>').join('') +
+    '</div><input type="hidden" id="jType" value="' + ty + '"></div>';
+
+  /* ร้านค้า */
+  h += '<div class="f"><label for="jStore">ร้านค้า</label>';
+  if (!S.stores.length) {
+    h += '<div class="note" style="margin-bottom:0"><span class="ni">🏪</span><div>ยังไม่มีร้านในระบบ ' +
+      '<button class="btn btn-sm" style="margin-top:7px" type="button" data-act="store-new-inline">เพิ่มร้านก่อน</button></div></div>' +
+      '<input type="hidden" id="jStore" value="">';
+  } else {
+    h += '<select id="jStore"><option value="">— เลือกร้าน —</option>' +
+      selectOpts(S.stores, j.storeId || '', (s) => s.id, (s) => (s.code ? s.code + ' · ' : '') + s.name) +
+      '</select>' +
+      '<div class="f-hint">ไม่มีร้านที่ต้องการ? <button class="btn btn-sm" type="button" data-act="store-new-inline">เพิ่มร้านใหม่</button></div>';
+  }
+  h += '</div>';
+
+  /* คนขับ + วันที่ */
+  h += '<div class="f-2" style="margin-bottom:12px">' +
+    '<div class="f"><label for="jDriver">คนขับ</label><select id="jDriver">' +
+    '<option value="">ยังไม่มอบหมาย</option>' +
+    selectOpts(S.drivers, driverId, (d) => d.id, (d) => d.name) + '</select></div>' +
+    '<div class="f"><label for="jDate">วันที่</label><input type="date" id="jDate" value="' + esc(date) + '"></div>' +
+    '</div>';
+
+  /* ---- ส่งสินค้า ---- */
+  h += '<div id="blk-deliver" class="ty-blk"' + (ty !== 'deliver' ? ' style="display:none"' : '') + '>' +
+    '<div class="f-2" style="margin-bottom:12px">' +
+      '<div class="f"><label for="jBillNo">เลขที่บิล / ใบส่งของ</label><input type="text" id="jBillNo" inputmode="text" value="' + esc(j.billNo || '') + '"></div>' +
+      '<div class="f"><label for="jAmount">ยอดบิล (บาท)</label><input type="number" id="jAmount" inputmode="decimal" step="0.01" value="' + esc(j.amount || '') + '"></div>' +
+    '</div>' +
+    '<div class="f"><div class="f-lab">รายการสินค้า <span class="opt">(ไม่ใส่ก็ได้)</span></div>' +
+      '<div class="item-h"><span>ชื่อสินค้า</span><span>จำนวน</span><span>หน่วย</span><span></span></div>' +
+      '<div class="items" id="itemList">' + items.map(itemRow).join('') + '</div>' +
+      '<button class="btn btn-sm btn-ghost" style="margin-top:7px" type="button" data-act="item-add">' + ICO.plus + ' เพิ่มรายการ</button>' +
+    '</div>' +
+    '<label class="check" style="margin-bottom:10px">' +
+      '<input type="checkbox" id="jCod" ' + (cod.on ? 'checked' : '') + ' data-chg="cod-toggle">' +
+      '<span>เก็บเงินปลายทาง</span></label>' +
+    '<div class="f" id="codBox"' + (cod.on ? '' : ' style="display:none"') + '>' +
+      '<label for="jCodAmt">ยอดที่ต้องเก็บ (บาท)</label>' +
+      '<input type="number" id="jCodAmt" inputmode="decimal" step="0.01" value="' + esc(cod.expected || '') + '">' +
+      '<div class="f-hint">ยอดที่รับจริงจะกรอกตอนปิดงาน</div></div>' +
+    '</div>';
+
+  /* ---- วางบิล ---- */
+  h += '<div id="blk-bill" class="ty-blk"' + (ty !== 'bill' ? ' style="display:none"' : '') + '>' +
+    '<div class="f-2" style="margin-bottom:12px">' +
+      '<div class="f"><label for="jDocNo">เลขที่ใบวางบิล</label><input type="text" id="jDocNo" value="' + esc(bill.docNo || '') + '"></div>' +
+      '<div class="f"><label for="jBillAmt">ยอดรวม (บาท)</label><input type="number" id="jBillAmt" inputmode="decimal" step="0.01" value="' + esc(j.amount || '') + '"></div>' +
+    '</div>' +
+    '<div class="f"><label for="jBillRefs">บิลที่วาง</label>' +
+      '<input type="text" id="jBillRefs" value="' + esc((bill.billRefs || []).join(', ')) + '" placeholder="เช่น INV-001, INV-002">' +
+      '<div class="f-hint">หลายบิลให้คั่นด้วยเครื่องหมายจุลภาค</div></div>' +
+    dateInput('jAppt', 'วันนัดรับเช็ค', bill.appointmentDate, 'ใส่ไว้แล้วตอนปิดงานจะมีปุ่มสร้างงานรับเช็คให้ทันที') +
+    '</div>';
+
+  /* ---- รับเช็ค ---- */
+  h += '<div id="blk-cheque" class="ty-blk"' + (ty !== 'cheque' ? ' style="display:none"' : '') + '>' +
+    '<div class="f"><div class="f-lab">ลูกค้าชำระเป็น</div><div class="seg" id="paySeg">' +
+      Object.keys(PAY).map((k) =>
+        '<button type="button" class="' + ((pay.method || 'cheque') === k ? 'on' : '') + '" data-act="pay-pick" data-k="' + k + '">' +
+        PAY[k].label + '</button>').join('') +
+      '</div><input type="hidden" id="jPayMethod" value="' + esc(pay.method || 'cheque') + '">' +
+      '<div class="f-hint">ตั้งไว้เป็นเช็คก่อนได้ ถ้าหน้างานลูกค้าจ่ายสดหรือโอน กดเปลี่ยนตอนปิดงานได้เลย</div></div>' +
+    '<div id="chqBox"' + ((pay.method || 'cheque') === 'cheque' ? '' : ' style="display:none"') + '>' +
+      '<div class="f-2" style="margin-bottom:12px">' +
+        '<div class="f"><label for="jChqNo">เลขที่เช็ค</label><input type="text" id="jChqNo" inputmode="numeric" value="' + esc(pay.chequeNo || '') + '"></div>' +
+        '<div class="f"><label for="jBank">ธนาคาร</label><input type="text" id="jBank" value="' + esc(pay.bank || '') + '"></div>' +
+      '</div>' +
+      dateInput('jChqDate', 'วันที่ลงเช็ค', pay.chequeDate) +
+    '</div>' +
+    '<div class="f"><label for="jPayAmt">ยอดเงิน (บาท)</label>' +
+      '<input type="number" id="jPayAmt" inputmode="decimal" step="0.01" value="' + esc(pay.amount || '') + '"></div>' +
+    '<div class="f"><label for="jPayRefs">ตัดบิลเลขที่</label>' +
+      '<input type="text" id="jPayRefs" value="' + esc((pay.billRefs || []).join(', ')) + '" placeholder="เช่น INV-001, INV-002"></div>' +
+    '</div>';
+
+  h += '<div class="f"><label for="jNote">หมายเหตุ <span class="opt">(ไม่ใส่ก็ได้)</span></label>' +
+    '<textarea id="jNote" placeholder="เช่น ให้โทรก่อนถึง 15 นาที / จอดรถหลังร้าน">' + esc(j.note || '') + '</textarea></div>';
+
+  h += '<div class="f-err" id="formErr" style="display:none"></div>';
+
+  h += '<button class="btn btn-pri btn-block" type="button" data-act="job-save" data-id="' + esc(j.id || '') + '">' +
+    (isNew ? 'สร้างงาน' : 'บันทึกการแก้ไข') + '</button>';
+
+  if (!isNew) {
+    h += '<button class="btn btn-ghost btn-block" style="margin-top:8px" type="button" data-act="sheet-back">ยกเลิก</button>';
+  }
+
+  return h;
+}
+
+ACT['job-new'] = () => openSheet(jobFormHtml(null, S.date));
+ACT['job-edit'] = (el) => openSheet(jobFormHtml(jobById(el.dataset.id)));
+
+ACT['ty-pick'] = (el) => {
+  const k = el.dataset.k;
+  document.getElementById('jType').value = k;
+  document.querySelectorAll('#tySeg button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+  ['deliver', 'bill', 'cheque'].forEach((x) => {
+    const blk = document.getElementById('blk-' + x);
+    if (blk) blk.style.display = (x === k) ? '' : 'none';
+  });
+};
+
+ACT['pay-pick'] = (el) => {
+  const k = el.dataset.k;
+  document.getElementById('jPayMethod').value = k;
+  document.querySelectorAll('#paySeg button').forEach((b) => b.classList.toggle('on', b.dataset.k === k));
+  const box = document.getElementById('chqBox');
+  if (box) box.style.display = (k === 'cheque') ? '' : 'none';
+};
+
+ACT['cod-toggle'] = (el) => {
+  const box = document.getElementById('codBox');
+  if (box) box.style.display = el.checked ? '' : 'none';
+};
+
+ACT['item-add'] = () => {
+  const list = document.getElementById('itemList');
+  if (!list) return;
+  const d = document.createElement('div');
+  d.innerHTML = itemRow();
+  list.appendChild(d.firstChild);
+  const inputs = list.querySelectorAll('.it-name');
+  if (inputs.length) inputs[inputs.length - 1].focus();
+};
+ACT['item-rm'] = (el) => {
+  const list = document.getElementById('itemList');
+  const row = el.closest('.item');
+  if (!row || !list) return;
+  if (list.children.length === 1) {
+    row.querySelectorAll('input').forEach((i) => { i.value = ''; });
+  } else row.remove();
+};
+
+function readItems() {
+  const out = [];
+  document.querySelectorAll('#itemList .item').forEach((r) => {
+    const name = String(r.querySelector('.it-name').value || '').trim();
+    const qty = String(r.querySelector('.it-qty').value || '').trim();
+    const unit = String(r.querySelector('.it-unit').value || '').trim();
+    if (name || qty) out.push({ name: name, qty: qty, unit: unit });
+  });
+  return out;
+}
+
+function splitRefs(s) {
+  return String(s || '').split(/[,\n;]+/).map((x) => x.trim()).filter(Boolean);
+}
+
+async function nextSeq(date, driverId) {
+  const list = jobsOfDay(date, driverId || null);
+  return list.reduce((m, j) => Math.max(m, j.seq || 0), 0) + 1;
+}
+
+ACT['job-save'] = async (el) => {
+  const id = el.dataset.id;
+  const old = id ? jobById(id) : null;
+  const type = val('jType') || 'deliver';
+  const storeId = val('jStore');
+  const driverId = val('jDriver');
+  const date = val('jDate') || S.date;
+
+  if (!storeId) { setErr('ยังไม่ได้เลือกร้านค้า'); return; }
+  const st = storeById(storeId);
+  if (!st) { setErr('ไม่พบร้านที่เลือก'); return; }
+
+  const rec = {
+    id: id || undefined,
+    date: date,
+    type: type,
+    storeId: storeId,
+    storeName: st.name,
+    driverId: driverId || '',
+    status: old ? old.status : (driverId ? 'assigned' : 'pending'),
+    note: val('jNote'),
+    photos: old ? (old.photos || []) : [],
+    events: old ? (old.events || []) : [],
+    round: old ? (old.round || 1) : 1,
+    parentJobId: old ? old.parentJobId : undefined,
+    childJobId: old ? old.childJobId : undefined,
+    rescheduledTo: old ? old.rescheduledTo : undefined,
+    fail: old ? old.fail : undefined,
+    seq: old ? old.seq : 0
+  };
+
+  if (type === 'deliver') {
+    rec.billNo = val('jBillNo');
+    rec.amount = num(val('jAmount'));
+    rec.items = readItems();
+    const on = checked('jCod');
+    rec.cod = {
+      on: on,
+      expected: on ? num(val('jCodAmt')) : 0,
+      received: old && old.cod ? num(old.cod.received) : 0,
+      method: old && old.cod ? old.cod.method : 'cash'
+    };
+    if (on && !rec.cod.expected) { setErr('ติ๊กเก็บเงินปลายทางไว้ แต่ยังไม่ได้ใส่ยอดที่ต้องเก็บ'); return; }
+  }
+
+  if (type === 'bill') {
+    rec.amount = num(val('jBillAmt'));
+    rec.bill = {
+      docNo: val('jDocNo'),
+      billRefs: splitRefs(val('jBillRefs')),
+      appointmentDate: val('jAppt')
+    };
+  }
+
+  if (type === 'cheque') {
+    const m = val('jPayMethod') || 'cheque';
+    rec.pay = {
+      method: m,
+      chequeNo: m === 'cheque' ? val('jChqNo') : '',
+      bank: m === 'cheque' ? val('jBank') : '',
+      chequeDate: m === 'cheque' ? val('jChqDate') : '',
+      amount: num(val('jPayAmt')),
+      billRefs: splitRefs(val('jPayRefs'))
+    };
+    rec.amount = rec.pay.amount;
+  }
+
+  if (!old || old.date !== date || old.driverId !== (driverId || '')) {
+    rec.seq = await nextSeq(date, driverId);
+  }
+
+  const saved = await DB.jobs.put(rec);
+  await reload();
+  closeSheet(true);
+  render();
+  toast(id ? 'บันทึกการแก้ไขแล้ว' : 'สร้างงานแล้ว', 'ok');
+  if (!id) setTimeout(() => openJob(saved.id), 120);
+};
+
+ACT['job-del'] = (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+  confirmSheet('ลบงานนี้?', 'งานที่ ' + esc(j.storeName || '') + ' วันที่ ' + thDate(j.date) +
+    ' จะถูกลบถาวร รูปถ่ายที่แนบไว้จะถูกลบด้วย', 'ลบงาน', true, async () => {
+    for (const pid of (j.photos || [])) { try { await DB.photos.remove(pid); } catch (e) {} }
+    await DB.jobs.remove(j.id);
+    await reload();
+    closeSheet(true);
+    render();
+    toast('ลบงานแล้ว');
+  });
+};
+
+/* ======================= สถานะงาน ======================= */
+
+async function pushEvent(j, st) {
+  const ev = (j.events || []).slice();
+  const p = S.pos;
+  ev.push({
+    st: st,
+    at: new Date().toISOString(),
+    lat: p ? p.lat : undefined,
+    lng: p ? p.lng : undefined,
+    acc: p ? Math.round(p.acc) : undefined
+  });
+  return ev;
+}
+
+ACT['job-st'] = async (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+  const st = el.dataset.st;
+  const rec = Object.assign({}, j, { status: st, events: await pushEvent(j, st) });
+  if (st === 'enroute') rec.startedAt = new Date().toISOString();
+  if (st === 'arrived') rec.arrivedAt = new Date().toISOString();
+  await DB.jobs.put(rec);
+  await reload();
+  closeSheet(true);
+  render();
+  toast(st === 'enroute' ? 'เริ่มเดินทางแล้ว' : 'บันทึกว่าถึงร้านแล้ว', 'ok');
+  setTimeout(() => openJob(j.id), 120);
+};
+
+ACT['job-reopen'] = (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+  confirmSheet('ย้อนสถานะงาน?', 'งานนี้จะกลับไปเป็น "ถึงร้าน" เพื่อแก้ไขและปิดงานใหม่ ' +
+    'ประวัติเดิมยังเก็บไว้ทั้งหมด', 'ย้อนสถานะ', false, async () => {
+    const rec = Object.assign({}, j, {
+      status: 'arrived',
+      events: await pushEvent(j, 'arrived'),
+      fail: undefined,
+      closedAt: undefined
+    });
+    await DB.jobs.put(rec);
+    await reload();
+    closeSheet(true);
+    render();
+    toast('ย้อนสถานะแล้ว');
+    setTimeout(() => openJob(j.id), 120);
+  });
+};
+
+/* ======================= ปิดงานสำเร็จ ======================= */
+
+ACT['close-ok'] = (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+  const nPhotos = (j.photos || []).length;
+
+  let h = sheetHead('ปิดงานสำเร็จ', j.storeName || '', true);
+
+  if (j.type === 'deliver' && j.cod && j.cod.on) {
+    h += '<div class="note" style="margin-bottom:13px"><span class="ni">💵</span>' +
+      '<div>ต้องเก็บเงินปลายทาง <b>' + money(j.cod.expected) + ' บาท</b></div></div>' +
+      '<div class="f"><label for="cRecv">ยอดที่รับจริง (บาท)</label>' +
+      '<input type="number" id="cRecv" inputmode="decimal" step="0.01" value="' + esc(j.cod.expected) + '"></div>' +
+      '<div class="f"><div class="f-lab">รับเป็น</div><div class="seg" id="cMethodSeg">' +
+      '<button type="button" class="on" data-act="cmethod" data-k="cash">เงินสด</button>' +
+      '<button type="button" data-act="cmethod" data-k="transfer">โอน</button>' +
+      '</div><input type="hidden" id="cMethod" value="cash"></div>';
+  }
+
+  if (j.type === 'bill') {
+    const b = j.bill || {};
+    h += '<div class="f"><label for="cDocNo">เลขที่ใบวางบิล</label>' +
+      '<input type="text" id="cDocNo" value="' + esc(b.docNo || '') + '"></div>' +
+      dateInput('cAppt', 'วันนัดรับเช็ค', b.appointmentDate, 'ถ้าร้านนัดวันแล้ว ใส่ไว้จะสร้างงานรับเช็คต่อได้ทันที');
+  }
+
+  if (j.type === 'cheque') {
+    const p = j.pay || {};
+    const m = p.method || 'cheque';
+    h += '<div class="f"><div class="f-lab">ลูกค้าชำระเป็น</div><div class="seg" id="paySeg">' +
+      Object.keys(PAY).map((k) =>
+        '<button type="button" class="' + (m === k ? 'on' : '') + '" data-act="pay-pick" data-k="' + k + '">' +
+        PAY[k].label + '</button>').join('') +
+      '</div><input type="hidden" id="jPayMethod" value="' + m + '"></div>' +
+      '<div id="chqBox"' + (m === 'cheque' ? '' : ' style="display:none"') + '>' +
+      '<div class="f-2" style="margin-bottom:12px">' +
+        '<div class="f"><label for="jChqNo">เลขที่เช็ค</label><input type="text" id="jChqNo" inputmode="numeric" value="' + esc(p.chequeNo || '') + '"></div>' +
+        '<div class="f"><label for="jBank">ธนาคาร</label><input type="text" id="jBank" value="' + esc(p.bank || '') + '"></div>' +
+      '</div>' + dateInput('jChqDate', 'วันที่ลงเช็ค', p.chequeDate) + '</div>' +
+      '<div class="f"><label for="jPayAmt">ยอดเงิน (บาท)</label>' +
+      '<input type="number" id="jPayAmt" inputmode="decimal" step="0.01" value="' + esc(p.amount || '') + '"></div>' +
+      '<div class="f"><label for="jPayRefs">ตัดบิลเลขที่</label>' +
+      '<input type="text" id="jPayRefs" value="' + esc((p.billRefs || []).join(', ')) + '"></div>';
+  }
+
+  h += '<div class="f"><label for="cNote">บันทึกเพิ่มเติม <span class="opt">(ไม่ใส่ก็ได้)</span></label>' +
+    '<textarea id="cNote" placeholder="เช่น ฝากไว้กับพนักงานชื่อ...">' + esc(j.closeNote || '') + '</textarea></div>';
+
+  h += nPhotos
+    ? '<div class="note info" style="margin-bottom:13px"><span class="ni">📷</span><div>แนบรูปไว้แล้ว ' + nPhotos + ' รูป</div></div>'
+    : '<div class="note" style="margin-bottom:13px"><span class="ni">📷</span>' +
+      '<div>ยังไม่มีรูปถ่าย ถ้าต้องการแนบ ให้กดยกเลิกแล้วกดถ่ายรูปในหน้างานก่อน ' +
+      'หรือปิดงานไปเลยก็ได้ ย้อนกลับมาเพิ่มรูปทีหลังได้</div></div>';
+
+  h += '<div class="f-err" id="formErr" style="display:none"></div>' +
+    '<button class="btn btn-acc btn-block" type="button" data-act="close-ok-save" data-id="' + esc(j.id) + '">' +
+    ICO.check + ' ยืนยันปิดงานสำเร็จ</button>' +
+    '<button class="btn btn-ghost btn-block" style="margin-top:8px" type="button" data-act="sheet-back">ยกเลิก</button>';
+
+  openSheet(h);
+};
+
+ACT['cmethod'] = (el) => {
+  document.getElementById('cMethod').value = el.dataset.k;
+  document.querySelectorAll('#cMethodSeg button').forEach((b) => b.classList.toggle('on', b.dataset.k === el.dataset.k));
+};
+
+ACT['close-ok-save'] = async (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+  const rec = Object.assign({}, j, {
+    status: 'done',
+    closedAt: new Date().toISOString(),
+    closeNote: val('cNote'),
+    events: await pushEvent(j, 'done'),
+    fail: undefined
+  });
+
+  if (j.type === 'deliver' && j.cod && j.cod.on) {
+    const got = num(val('cRecv'));
+    if (!got) { setErr('ยังไม่ได้ใส่ยอดที่รับจริง ถ้าเก็บเงินไม่ได้ให้ปิดงานไม่สำเร็จแทน'); return; }
+    rec.cod = Object.assign({}, j.cod, { received: got, method: val('cMethod') || 'cash' });
+  }
+
+  if (j.type === 'bill') {
+    rec.bill = Object.assign({}, j.bill || {}, { docNo: val('cDocNo'), appointmentDate: val('cAppt') });
+  }
+
+  if (j.type === 'cheque') {
+    const m = val('jPayMethod') || 'cheque';
+    const amt = num(val('jPayAmt'));
+    if (!amt) { setErr('ยังไม่ได้ใส่ยอดเงิน'); return; }
+    if (m === 'cheque' && !val('jChqNo')) { setErr('รับเป็นเช็ค แต่ยังไม่ได้ใส่เลขที่เช็ค'); return; }
+    rec.pay = {
+      method: m,
+      chequeNo: m === 'cheque' ? val('jChqNo') : '',
+      bank: m === 'cheque' ? val('jBank') : '',
+      chequeDate: m === 'cheque' ? val('jChqDate') : '',
+      amount: amt,
+      billRefs: splitRefs(val('jPayRefs'))
+    };
+    rec.amount = amt;
+  }
+
+  await DB.jobs.put(rec);
+  await reload();
+  closeSheet(true);
+  render();
+  toast('ปิดงานสำเร็จแล้ว', 'ok');
+};
+
+/* ======================= ปิดงานไม่สำเร็จ ======================= */
+
+ACT['close-fail'] = (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+
+  let h = sheetHead('ปิดงานไม่สำเร็จ', j.storeName || '', true);
+
+  h += '<div class="f"><div class="f-lab">สาเหตุ <span style="color:var(--s-failed)">*</span></div>' +
+    '<div class="pills" id="frPills">' +
+    FAIL_REASONS.map((r) => '<button type="button" class="pill" data-act="fr-pick" data-r="' + esc(r) + '">' + esc(r) + '</button>').join('') +
+    '</div><input type="hidden" id="fReason" value="">' +
+    '<div class="f" id="frOther" style="display:none;margin-top:9px">' +
+    '<input type="text" id="fReasonOther" placeholder="พิมพ์สาเหตุ"></div></div>';
+
+  h += '<div class="f"><label for="fNote">รายละเอียดเพิ่มเติม <span class="opt">(ไม่ใส่ก็ได้)</span></label>' +
+    '<textarea id="fNote" placeholder="เช่น ร้านแจ้งให้มาวันจันทร์ ติดต่อคุณสมหญิง"></textarea></div>';
+
+  h += '<div class="f"><div class="f-lab">นัดใหม่วันไหน</div>' +
+    '<div class="pills" style="margin-bottom:9px">' +
+    '<button type="button" class="pill" data-act="rs-pick" data-d="' + addDays(j.date, 1) + '">พรุ่งนี้ (' + thDate(addDays(j.date, 1)) + ')</button>' +
+    '<button type="button" class="pill" data-act="rs-pick" data-d="' + addDays(j.date, 2) + '">' + thDate(addDays(j.date, 2)) + '</button>' +
+    '<button type="button" class="pill" data-act="rs-pick" data-d="' + addDays(j.date, 7) + '">อีก 7 วัน</button>' +
+    '<button type="button" class="pill" data-act="rs-pick" data-d="">ยังไม่นัด</button>' +
+    '</div>' +
+    '<input type="date" id="fResch" value="' + addDays(j.date, 1) + '">' +
+    '<div class="f-hint">ถ้าใส่วันไว้ ระบบจะสร้างงานรอบใหม่ให้อัตโนมัติในวันนั้น ' +
+    'โดยยังผูกกับงานเดิมเพื่อดูประวัติย้อนหลังได้</div></div>';
+
+  h += '<label class="check" style="margin-bottom:13px">' +
+    '<input type="checkbox" id="fSameDriver" checked><span>ให้คนขับคนเดิมไปรอบใหม่</span></label>';
+
+  h += '<div class="f-err" id="formErr" style="display:none"></div>' +
+    '<button class="btn btn-danger btn-block" type="button" data-act="close-fail-save" data-id="' + esc(j.id) + '">' +
+    ICO.x + ' ยืนยันปิดงานไม่สำเร็จ</button>' +
+    '<button class="btn btn-ghost btn-block" style="margin-top:8px" type="button" data-act="sheet-back">ยกเลิก</button>';
+
+  openSheet(h);
+};
+
+ACT['fr-pick'] = (el) => {
+  const r = el.dataset.r;
+  document.getElementById('fReason').value = r;
+  document.querySelectorAll('#frPills .pill').forEach((b) => b.classList.toggle('on-bad', b.dataset.r === r));
+  const other = document.getElementById('frOther');
+  other.style.display = (r === 'อื่น ๆ') ? '' : 'none';
+  if (r === 'อื่น ๆ') document.getElementById('fReasonOther').focus();
+  setErr('');
+};
+
+ACT['rs-pick'] = (el) => {
+  const d = el.dataset.d;
+  document.getElementById('fResch').value = d;
+  document.querySelectorAll('[data-act="rs-pick"]').forEach((b) => b.classList.toggle('on', b.dataset.d === d));
+};
+
+ACT['close-fail-save'] = async (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+
+  let reason = val('fReason');
+  if (!reason) { setErr('ยังไม่ได้เลือกสาเหตุ'); return; }
+  if (reason === 'อื่น ๆ') {
+    const o = val('fReasonOther');
+    if (!o) { setErr('เลือก "อื่น ๆ" แล้วต้องพิมพ์สาเหตุด้วย'); return; }
+    reason = o;
+  }
+
+  const resch = val('fResch');
+  const sameDriver = checked('fSameDriver');
+
+  const rec = Object.assign({}, j, {
+    status: 'failed',
+    closedAt: new Date().toISOString(),
+    events: await pushEvent(j, 'failed'),
+    fail: { reason: reason, note: val('fNote'), at: new Date().toISOString() },
+    rescheduledTo: resch || undefined
+  });
+
+  let childId = null;
+  if (resch) {
+    const driverId = sameDriver ? (j.driverId || '') : '';
+    const child = {
+      date: resch,
+      type: j.type,
+      storeId: j.storeId,
+      storeName: j.storeName,
+      driverId: driverId,
+      status: driverId ? 'assigned' : 'pending',
+      billNo: j.billNo,
+      amount: j.amount,
+      items: j.items,
+      cod: j.cod ? Object.assign({}, j.cod, { received: 0 }) : undefined,
+      bill: j.bill,
+      pay: j.pay ? Object.assign({}, j.pay) : undefined,
+      note: j.note,
+      photos: [],
+      events: [],
+      round: (j.round || 1) + 1,
+      parentJobId: j.id,
+      seq: await nextSeq(resch, driverId)
+    };
+    const saved = await DB.jobs.put(child);
+    childId = saved.id;
+    rec.childJobId = childId;
+  }
+
+  await DB.jobs.put(rec);
+  await reload();
+  closeSheet(true);
+  render();
+  toast(resch ? 'บันทึกแล้ว สร้างงานรอบใหม่วันที่ ' + thDate(resch) : 'บันทึกการปิดงานไม่สำเร็จแล้ว', 'ok');
+};
+
+/* ======================= สร้างงานรับเช็คจากงานวางบิล ======================= */
+
+ACT['job-from-bill'] = async (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j || !j.bill || !j.bill.appointmentDate) return;
+  const d = j.bill.appointmentDate;
+  const rec = {
+    date: d,
+    type: 'cheque',
+    storeId: j.storeId,
+    storeName: j.storeName,
+    driverId: j.driverId || '',
+    status: j.driverId ? 'assigned' : 'pending',
+    pay: {
+      method: 'cheque', chequeNo: '', bank: '', chequeDate: '',
+      amount: num(j.amount), billRefs: (j.bill.billRefs || []).slice()
+    },
+    amount: num(j.amount),
+    note: 'จากการวางบิลวันที่ ' + thDate(j.date),
+    photos: [], events: [], round: 1,
+    parentJobId: j.id,
+    seq: await nextSeq(d, j.driverId)
+  };
+  const saved = await DB.jobs.put(rec);
+  await reload();
+  closeSheet(true);
+  render();
+  toast('สร้างงานรับเช็ค วันที่ ' + thDate(d) + ' แล้ว', 'ok');
+  setTimeout(() => openJob(saved.id), 120);
+};
+
+/* ======================= ย้ายงาน ======================= */
+
+ACT['job-move'] = (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+  openSheet(
+    sheetHead('ย้ายงาน', j.storeName || '', true) +
+    '<div class="f"><label for="mDriver">คนขับ</label><select id="mDriver">' +
+    '<option value="">ยังไม่มอบหมาย</option>' +
+    selectOpts(S.drivers, j.driverId || '', (d) => d.id, (d) => d.name) + '</select></div>' +
+    dateInput('mDate', 'วันที่', j.date) +
+    '<button class="btn btn-pri btn-block" type="button" data-act="job-move-save" data-id="' + esc(j.id) + '">บันทึก</button>'
+  );
+};
+
+ACT['job-move-save'] = async (el) => {
+  const j = jobById(el.dataset.id);
+  if (!j) return;
+  const driverId = val('mDriver');
+  const date = val('mDate') || j.date;
+  const changed = (j.driverId || '') !== driverId || j.date !== date;
+  const rec = Object.assign({}, j, {
+    driverId: driverId,
+    date: date,
+    status: (j.status === 'pending' && driverId) ? 'assigned' : j.status,
+    seq: changed ? await nextSeq(date, driverId) : j.seq
+  });
+  await DB.jobs.put(rec);
+  await reload();
+  closeSheet(true);
+  render();
+  toast('ย้ายงานแล้ว', 'ok');
+};
+
+/* ======================= เรียงลำดับ ======================= */
+
+async function reseq(list) {
+  for (let i = 0; i < list.length; i++) {
+    if (list[i].seq !== i + 1) await DB.jobs.put(Object.assign({}, list[i], { seq: i + 1 }));
+  }
+}
+
+async function swapSeq(id, dir) {
+  const j = jobById(id);
+  if (!j) return;
+  const all = jobsOfDay(j.date, j.driverId || null);
+  const open = all.filter((x) => !CLOSED[x.status]);
+  const i = open.findIndex((x) => x.id === id);
+  if (i < 0) return;
+  const k = i + dir;
+  if (k < 0 || k >= open.length) return;
+  const tmp = open[i];
+  open[i] = open[k];
+  open[k] = tmp;
+  const closed = all.filter((x) => CLOSED[x.status]);
+  await reseq(closed.concat(open));
+  await reload();
+  render();
+}
+
+ACT['job-up'] = (el) => swapSeq(el.dataset.id, -1);
+ACT['job-down'] = (el) => swapSeq(el.dataset.id, 1);
+
+ACT['route-suggest'] = async () => {
+  const drvId = activeDriverId();
+  const all = jobsOfDay(S.date, drvId);
+  const open = all.filter((j) => !CLOSED[j.status]);
+  if (open.length < 2) { toast('มีงานน้อยเกินกว่าจะจัดลำดับ'); return; }
+
+  let from = S.pos;
+  if (!from) {
+    toast('กำลังหาตำแหน่งปัจจุบัน...');
+    from = await gpsOnce();
+  }
+
+  const pinned = [], unpinned = [];
+  open.forEach((j) => {
+    const st = storeById(j.storeId);
+    if (st && st.lat !== undefined && st.lat !== null) pinned.push({ j: j, p: { lat: st.lat, lng: st.lng } });
+    else unpinned.push(j);
+  });
+
+  if (pinned.length < 2) { toast('ร้านที่ปักหมุดไว้ยังน้อยเกินไป ลองปักหมุดร้านเพิ่มก่อน', 'bad', 4000); return; }
+
+  // เพื่อนบ้านใกล้สุด เริ่มจากตำแหน่งปัจจุบัน (ถ้าไม่มีให้เริ่มจากร้านแรก)
+  const rest = pinned.slice();
+  const order = [];
+  let cur = from || rest[0].p;
+  while (rest.length) {
+    let bi = 0, bd = Infinity;
+    rest.forEach((x, i) => {
+      const d = distKm(cur, x.p);
+      if (d !== null && d < bd) { bd = d; bi = i; }
+    });
+    const pick = rest.splice(bi, 1)[0];
+    order.push(pick.j);
+    cur = pick.p;
+  }
+
+  const closed = all.filter((j) => CLOSED[j.status]);
+  await reseq(closed.concat(order, unpinned));
+  await reload();
+  render();
+  toast('จัดลำดับแนะนำให้แล้ว ปรับเองได้ด้วยปุ่มลูกศร' +
+    (unpinned.length ? ' (' + unpinned.length + ' ร้านไม่มีหมุด ต่อท้ายไว้)' : ''), 'ok', 4200);
+};
+
+/* ======================= ฟอร์มร้านค้า ======================= */
+
+function storeFormHtml(s, opts) {
+  const isNew = !s;
+  s = s || {};
+  opts = opts || {};
+  const hasPin = s.lat !== undefined && s.lat !== null;
+
+  let h = sheetHead(isNew ? 'เพิ่มร้านค้า' : 'แก้ไขร้านค้า', isNew ? '' : s.name, !!opts.backable);
+
+  h += '<div class="f"><label for="sName">ชื่อร้าน <span style="color:var(--s-failed)">*</span></label>' +
+    '<input type="text" id="sName" value="' + esc(s.name || '') + '" placeholder="เช่น ร้านสมชายการค้า"></div>';
+
+  h += '<div class="f-2" style="margin-bottom:12px">' +
+    '<div class="f"><label for="sCode">รหัสร้าน <span class="opt">(ถ้ามี)</span></label>' +
+    '<input type="text" id="sCode" value="' + esc(s.code || '') + '"></div>' +
+    '<div class="f"><label for="sPhone">เบอร์โทร</label>' +
+    '<input type="tel" id="sPhone" inputmode="tel" value="' + esc(s.phone || '') + '"></div>' +
+    '</div>';
+
+  h += '<div class="f"><label for="sAddr">ที่อยู่</label>' +
+    '<textarea id="sAddr" placeholder="บ้านเลขที่ ถนน ตำบล อำเภอ จังหวัด">' + esc(s.address || '') + '</textarea></div>';
+
+  h += '<div class="f-2" style="margin-bottom:12px">' +
+    '<div class="f"><label for="sContact">ชื่อผู้ติดต่อ</label>' +
+    '<input type="text" id="sContact" value="' + esc(s.contactName || '') + '"></div>' +
+    '<div class="f"><label for="sHours">เวลารับของ</label>' +
+    '<input type="text" id="sHours" value="' + esc(s.openHours || '') + '" placeholder="เช่น 8:00-16:00"></div>' +
+    '</div>';
+
+  h += '<div class="f"><label for="sCycle">รอบวางบิล</label>' +
+    '<input type="text" id="sCycle" value="' + esc(s.billingCycle || '') + '" placeholder="เช่น ทุกวันที่ 25 / ทุกศุกร์"></div>';
+
+  /* พิกัด */
+  h += '<div class="f"><div class="f-lab">พิกัดร้าน (หมุดบนแผนที่)</div>' +
+    '<div class="card" style="padding:12px">' +
+    '<div id="pinState" style="font-size:14px;font-weight:600;margin-bottom:9px">' +
+      (hasPin
+        ? '<span style="color:var(--s-done)">✓ ปักหมุดแล้ว</span> <span class="muted mono" style="font-weight:400;font-size:12.5px">' + Number(s.lat).toFixed(6) + ', ' + Number(s.lng).toFixed(6) + '</span>'
+        : '<span style="color:var(--accent)">ยังไม่ได้ปักหมุด</span>') +
+    '</div>' +
+    '<input type="hidden" id="sLat" value="' + (hasPin ? s.lat : '') + '">' +
+    '<input type="hidden" id="sLng" value="' + (hasPin ? s.lng : '') + '">' +
+    '<button class="btn btn-sm btn-block" style="margin-bottom:8px" type="button" data-act="pin-here">' +
+      ICO.locate + ' ใช้ตำแหน่งที่ยืนอยู่ตอนนี้</button>' +
+    '<div class="f" style="margin-bottom:0"><label for="sPaste" style="font-size:12px">หรือวางพิกัดจาก Google Maps</label>' +
+    '<input type="text" id="sPaste" placeholder="13.756331, 100.501765" data-inp="pin-paste">' +
+    '<div class="f-hint">ใน Google Maps กดค้างที่จุดร้าน แล้วแตะตัวเลขพิกัดเพื่อคัดลอก จากนั้นวางลงช่องนี้</div></div>' +
+    '</div></div>';
+
+  h += '<div class="f"><label for="sNote">หมายเหตุ</label>' +
+    '<textarea id="sNote" placeholder="เช่น จอดรถหลังร้าน ประตูเล็กซอยข้าง">' + esc(s.note || '') + '</textarea></div>';
+
+  h += '<div class="f-err" id="formErr" style="display:none"></div>';
+
+  h += '<button class="btn btn-pri btn-block" type="button" data-act="store-save" data-id="' + esc(s.id || '') +
+    '" data-then="' + esc(opts.then || '') + '">' + (isNew ? 'บันทึกร้าน' : 'บันทึกการแก้ไข') + '</button>';
+
+  if (!isNew) {
+    h += '<button class="btn btn-danger btn-block" style="margin-top:8px" type="button" data-act="store-del" data-id="' + esc(s.id) + '">ลบร้านนี้</button>';
+  }
+  return h;
+}
+
+ACT['store-new'] = () => openSheet(storeFormHtml(null));
+ACT['store-new-inline'] = () => openSheet(storeFormHtml(null, { backable: true, then: 'job' }));
+
+ACT['pin-here'] = async (el) => {
+  el.disabled = true;
+  el.innerHTML = '<span class="spin" style="border-color:var(--line);border-top-color:var(--brand)"></span> กำลังหาตำแหน่ง...';
+  const p = await gpsOnce();
+  el.disabled = false;
+  el.innerHTML = ICO.locate + ' ใช้ตำแหน่งที่ยืนอยู่ตอนนี้';
+  if (!p) { toast('หาตำแหน่งไม่ได้ ลองออกมาที่โล่งหรือตรวจว่าเปิด GPS แล้ว', 'bad', 4000); return; }
+  document.getElementById('sLat').value = p.lat;
+  document.getElementById('sLng').value = p.lng;
+  document.getElementById('pinState').innerHTML =
+    '<span style="color:var(--s-done)">✓ ปักหมุดแล้ว</span> <span class="muted mono" style="font-weight:400;font-size:12.5px">' +
+    p.lat.toFixed(6) + ', ' + p.lng.toFixed(6) + ' (± ' + Math.round(p.acc) + ' ม.)</span>';
+  toast('ปักหมุดจากตำแหน่งปัจจุบันแล้ว', 'ok');
+};
+
+ACT['pin-paste'] = (el) => {
+  const p = parseLatLng(el.value);
+  if (!p) return;
+  document.getElementById('sLat').value = p.lat;
+  document.getElementById('sLng').value = p.lng;
+  document.getElementById('pinState').innerHTML =
+    '<span style="color:var(--s-done)">✓ ปักหมุดแล้ว</span> <span class="muted mono" style="font-weight:400;font-size:12.5px">' +
+    p.lat.toFixed(6) + ', ' + p.lng.toFixed(6) + '</span>';
+};
+
+ACT['store-save'] = async (el) => {
+  const id = el.dataset.id;
+  const then = el.dataset.then;
+  const name = val('sName');
+  if (!name) { setErr('ยังไม่ได้ใส่ชื่อร้าน'); return; }
+
+  const latS = val('sLat'), lngS = val('sLng');
+  const rec = {
+    id: id || undefined,
+    name: name,
+    code: val('sCode'),
+    phone: val('sPhone'),
+    address: val('sAddr'),
+    contactName: val('sContact'),
+    openHours: val('sHours'),
+    billingCycle: val('sCycle'),
+    note: val('sNote'),
+    lat: latS === '' ? undefined : Number(latS),
+    lng: lngS === '' ? undefined : Number(lngS)
+  };
+
+  const saved = await DB.stores.put(rec);
+  await reload();
+
+  if (then === 'job') {
+    closeSheet();
+    const sel = document.getElementById('jStore');
+    if (sel) {
+      sel.innerHTML = '<option value="">— เลือกร้าน —</option>' +
+        selectOpts(S.stores, saved.id, (s) => s.id, (s) => (s.code ? s.code + ' · ' : '') + s.name);
+      sel.value = saved.id;
+    } else {
+      closeSheet(true);
+      openSheet(jobFormHtml(null, S.date));
+      setTimeout(() => { const s2 = document.getElementById('jStore'); if (s2) s2.value = saved.id; }, 60);
+    }
+    toast('เพิ่มร้าน ' + name + ' แล้ว', 'ok');
+    return;
+  }
+
+  closeSheet(true);
+  render();
+  toast(id ? 'บันทึกการแก้ไขแล้ว' : 'เพิ่มร้านแล้ว', 'ok');
+};
+
+ACT['store-del'] = (el) => {
+  const s = storeById(el.dataset.id);
+  if (!s) return;
+  const used = S.jobs.filter((j) => j.storeId === s.id).length;
+  confirmSheet('ลบร้านนี้?',
+    used
+      ? 'ร้าน ' + esc(s.name) + ' มีงานผูกอยู่ ' + used + ' รายการ ระบบจะซ่อนร้านออกจากรายการแต่เก็บประวัติงานไว้'
+      : 'ร้าน ' + esc(s.name) + ' จะถูกลบ',
+    'ลบร้าน', true, async () => {
+      if (used) await DB.stores.put(Object.assign({}, s, { deleted: true }));
+      else await DB.stores.remove(s.id);
+      await reload();
+      closeSheet(true);
+      render();
+      toast('ลบร้านแล้ว');
+    });
+};
+
+ACT['store-pin-now'] = async (el) => {
+  const s = storeById(el.dataset.id);
+  if (!s) return;
+  const p = await gpsOnce();
+  if (!p) { toast('หาตำแหน่งไม่ได้', 'bad'); return; }
+  await DB.stores.put(Object.assign({}, s, { lat: p.lat, lng: p.lng }));
+  await reload();
+  closeSheet(true);
+  render();
+  toast('ปักหมุดร้าน ' + s.name + ' แล้ว', 'ok');
+};
+
+ACT['store-search'] = (el) => {
+  S.search = el.value;
+  const scr = document.getElementById('screen');
+  scr.innerHTML = Views.stores();
+  const inp = scr.querySelector('[data-inp="store-search"]');
+  if (inp) { inp.focus(); inp.setSelectionRange(inp.value.length, inp.value.length); }
+};
+ACT['store-search-clear'] = () => { S.search = ''; render(); };
+
+/* ======================= รายละเอียดร้าน ======================= */
+
+ACT['store-open'] = (el) => {
+  const s = storeById(el.dataset.id);
+  if (!s) return;
+  const jobs = S.jobs.filter((j) => j.storeId === s.id)
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  const hasPin = s.lat !== undefined && s.lat !== null;
+  const done = jobs.filter((j) => j.status === 'done').length;
+  const failed = jobs.filter((j) => j.status === 'failed').length;
+
+  let h = sheetHead(s.name, s.code ? 'รหัส ' + s.code : '');
+
+  const bits = [];
+  if (s.address) bits.push('<div class="dl-r"><div class="dl-k">ที่อยู่</div><div class="dl-v">' + esc(s.address) + '</div></div>');
+  if (s.contactName) bits.push('<div class="dl-r"><div class="dl-k">ผู้ติดต่อ</div><div class="dl-v">' + esc(s.contactName) + '</div></div>');
+  if (s.phone) bits.push('<div class="dl-r"><div class="dl-k">โทร</div><div class="dl-v">' + esc(s.phone) + '</div></div>');
+  if (s.openHours) bits.push('<div class="dl-r"><div class="dl-k">เวลารับของ</div><div class="dl-v">' + esc(s.openHours) + '</div></div>');
+  if (s.billingCycle) bits.push('<div class="dl-r"><div class="dl-k">รอบวางบิล</div><div class="dl-v">' + esc(s.billingCycle) + '</div></div>');
+  if (s.note) bits.push('<div class="dl-r"><div class="dl-k">หมายเหตุ</div><div class="dl-v">' + esc(s.note) + '</div></div>');
+  bits.push('<div class="dl-r"><div class="dl-k">หมุด</div><div class="dl-v">' +
+    (hasPin ? '<span class="mono" style="font-size:13px">' + Number(s.lat).toFixed(6) + ', ' + Number(s.lng).toFixed(6) + '</span>' : '<span style="color:var(--accent)">ยังไม่ได้ปักหมุด</span>') +
+    '</div></div>');
+  h += '<div class="dl">' + bits.join('') + '</div>';
+
+  const row = [];
+  if (s.phone) row.push('<a class="btn" href="' + esc(telUrl(s.phone)) + '">' + ICO.phone + ' โทร</a>');
+  if (hasPin) row.push('<a class="btn btn-pri" href="' + esc(navUrl(s.lat, s.lng)) + '" target="_blank" rel="noopener">' + ICO.nav + ' นำทาง</a>');
+  if (row.length) h += '<div class="btn-row" style="margin-bottom:13px">' + row.join('') + '</div>';
+
+  h += '<div class="tiles tiles-3" style="margin-bottom:14px">' +
+    tile('งานทั้งหมด', jobs.length) +
+    tile('สำเร็จ', done, '', 'ok') +
+    tile('ไม่สำเร็จ', failed, '', failed ? 'bad' : '') +
+    '</div>';
+
+  h += '<div class="btn-row" style="margin-bottom:14px">' +
+    '<button class="btn" type="button" data-act="store-edit" data-id="' + esc(s.id) + '">แก้ไขข้อมูลร้าน</button>' +
+    '<button class="btn btn-acc" type="button" data-act="job-new-store" data-id="' + esc(s.id) + '">' + ICO.plus + ' สร้างงาน</button>' +
+    '</div>';
+
+  if (jobs.length) {
+    h += '<div class="sec-h"><span class="sec-t">ประวัติงานร้านนี้</span></div>' +
+      jobs.slice(0, 30).map((j) => {
+        const t = TY[j.type] || TY.deliver;
+        const sj = ST[j.status] || ST.pending;
+        return '<button class="row" type="button" data-act="job-open" data-id="' + esc(j.id) + '">' +
+          '<div class="row-ico" style="background:var(--line-2)">' + t.ico + '</div>' +
+          '<div class="row-main"><div class="row-t">' + t.label + ' · ' + thDate(j.date) +
+          (j.round > 1 ? ' <span class="chip">รอบ ' + j.round + '</span>' : '') + '</div>' +
+          '<div class="row-s">' + esc(sj.label + (j.fail && j.fail.reason ? ' · ' + j.fail.reason : '')) + '</div></div>' +
+          '<div class="row-x">' + ICO.chev + '</div></button>';
+      }).join('');
+  }
+
+  openSheet(h);
+};
+
+ACT['store-edit'] = (el) => openSheet(storeFormHtml(storeById(el.dataset.id), { backable: true }));
+
+ACT['job-new-store'] = (el) => {
+  closeSheet(true);
+  openSheet(jobFormHtml(null, S.date));
+  setTimeout(() => { const s = document.getElementById('jStore'); if (s) s.value = el.dataset.id; }, 60);
+};
+
+/* ======================= รูปถ่าย ======================= */
+
+let _photoJobId = null;
+
+ACT['photo-add'] = (el) => {
+  _photoJobId = el.dataset.id;
+  const inp = document.getElementById('photoInput');
+  inp.value = '';
+  inp.click();
+};
+
+async function compressImage(file, maxDim, quality) {
+  let bmp = null;
+  try {
+    bmp = await createImageBitmap(file, { imageOrientation: 'from-image' });
+  } catch (e) {
+    try { bmp = await createImageBitmap(file); } catch (e2) { bmp = null; }
+  }
+  if (!bmp) {
+    // สำรอง: ใช้ <img>
+    const url = URL.createObjectURL(file);
+    try {
+      bmp = await new Promise((res, rej) => {
+        const im = new Image();
+        im.onload = () => res(im);
+        im.onerror = rej;
+        im.src = url;
+      });
+    } catch (e) { URL.revokeObjectURL(url); return file; }
+  }
+  const w = bmp.width || bmp.naturalWidth;
+  const hh = bmp.height || bmp.naturalHeight;
+  const sc = Math.min(1, maxDim / Math.max(w, hh));
+  const cw = Math.max(1, Math.round(w * sc));
+  const ch = Math.max(1, Math.round(hh * sc));
+  const cv = document.createElement('canvas');
+  cv.width = cw; cv.height = ch;
+  cv.getContext('2d').drawImage(bmp, 0, 0, cw, ch);
+  if (bmp.close) bmp.close();
+  const blob = await new Promise((res) => cv.toBlob(res, 'image/jpeg', quality));
+  return blob || file;
+}
+
+document.addEventListener('DOMContentLoaded', () => {
+  const inp = document.getElementById('photoInput');
+  if (inp) inp.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file || !_photoJobId) return;
+    const j = jobById(_photoJobId);
+    if (!j) return;
+    toast('กำลังย่อและบันทึกรูป...');
+    try {
+      const blob = await compressImage(file, 1280, 0.72);
+      const rec = await DB.photos.add(blob, { jobId: j.id });
+      await DB.jobs.put(Object.assign({}, j, { photos: (j.photos || []).concat([rec.id]) }));
+      await reload();
+      toast('บันทึกรูปแล้ว (' + byteLabel(blob.size) + ')', 'ok');
+      closeSheet(true);
+      openJob(j.id);
+    } catch (err) {
+      console.error(err);
+      toast('บันทึกรูปไม่ได้', 'bad');
+    }
+  });
+
+  const rin = document.getElementById('restoreInput');
+  if (rin) rin.addEventListener('change', async (e) => {
+    const file = e.target.files && e.target.files[0];
+    if (!file) return;
+    try {
+      const data = JSON.parse(await file.text());
+      const n = await DB.importAll(data, window._restoreMode || 'merge');
+      await reload();
+      closeSheet(true);
+      render();
+      toast('กู้คืนแล้ว ร้าน ' + n.stores + ' · งาน ' + n.jobs + ' · รูป ' + n.photos, 'ok', 4500);
+    } catch (err) {
+      console.error(err);
+      toast('อ่านไฟล์สำรองไม่ได้: ' + err.message, 'bad', 5000);
+    }
+  });
+});
+
+ACT['photo-del'] = (el) => {
+  const j = jobById(el.dataset.jid);
+  const pid = el.dataset.pid;
+  if (!j) return;
+  confirmSheet('ลบรูปนี้?', 'รูปจะถูกลบถาวร', 'ลบรูป', true, async () => {
+    await DB.photos.remove(pid);
+    await DB.jobs.put(Object.assign({}, j, { photos: (j.photos || []).filter((x) => x !== pid) }));
+    await reload();
+    closeSheet(true);
+    openJob(j.id);
+    toast('ลบรูปแล้ว');
+  });
+};
+
+/* ======================= คนขับ ======================= */
+
+ACT['driver-new'] = () => openSheet(driverFormHtml(null));
+ACT['driver-edit'] = (el) => openSheet(driverFormHtml(driverById(el.dataset.id), true));
+
+function driverFormHtml(d, backable) {
+  const isNew = !d;
+  d = d || {};
+  return sheetHead(isNew ? 'เพิ่มคนขับ' : 'แก้ไขคนขับ', isNew ? '' : d.name, backable) +
+    '<div class="f"><label for="dName">ชื่อ <span style="color:var(--s-failed)">*</span></label>' +
+    '<input type="text" id="dName" value="' + esc(d.name || '') + '" placeholder="เช่น สมชาย"></div>' +
+    '<div class="f-2" style="margin-bottom:12px">' +
+    '<div class="f"><label for="dVeh">ทะเบียนรถ</label><input type="text" id="dVeh" value="' + esc(d.vehicle || '') + '" placeholder="เช่น 1กก-1234"></div>' +
+    '<div class="f"><label for="dPhone">เบอร์โทร</label><input type="tel" id="dPhone" inputmode="tel" value="' + esc(d.phone || '') + '"></div>' +
+    '</div>' +
+    '<div class="f-err" id="formErr" style="display:none"></div>' +
+    '<button class="btn btn-pri btn-block" type="button" data-act="driver-save" data-id="' + esc(d.id || '') + '">' +
+    (isNew ? 'เพิ่มคนขับ' : 'บันทึก') + '</button>' +
+    (isNew ? '' : '<button class="btn btn-danger btn-block" style="margin-top:8px" type="button" data-act="driver-del" data-id="' + esc(d.id) + '">ลบคนขับ</button>');
+}
+
+ACT['driver-save'] = async (el) => {
+  const name = val('dName');
+  if (!name) { setErr('ยังไม่ได้ใส่ชื่อ'); return; }
+  const id = el.dataset.id;
+  const old = id ? driverById(id) : null;
+  await DB.drivers.put({
+    id: id || undefined,
+    name: name,
+    vehicle: val('dVeh'),
+    phone: val('dPhone'),
+    order: old ? old.order : (S.drivers.length + 1)
+  });
+  await reload();
+  closeSheet(true);
+  render();
+  toast(id ? 'บันทึกแล้ว' : 'เพิ่มคนขับแล้ว', 'ok');
+};
+
+ACT['driver-del'] = (el) => {
+  const d = driverById(el.dataset.id);
+  if (!d) return;
+  if (S.drivers.length <= 1) { toast('ต้องมีคนขับอย่างน้อย 1 คน', 'bad'); return; }
+  const used = S.jobs.filter((j) => j.driverId === d.id && !CLOSED[j.status]).length;
+  confirmSheet('ลบคนขับ ' + esc(d.name) + '?',
+    used ? 'ยังมีงานค้างอยู่ ' + used + ' รายการ งานเหล่านั้นจะกลายเป็นยังไม่มอบหมาย' : 'ประวัติงานเดิมยังเก็บไว้',
+    'ลบคนขับ', true, async () => {
+      for (const j of S.jobs.filter((x) => x.driverId === d.id && !CLOSED[x.status])) {
+        await DB.jobs.put(Object.assign({}, j, { driverId: '', status: 'pending' }));
+      }
+      await DB.drivers.put(Object.assign({}, d, { deleted: true }));
+      await reload();
+      if (S.myDriverId === d.id) {
+        S.myDriverId = S.drivers[0] ? S.drivers[0].id : null;
+        await DB.meta.set('myDriverId', S.myDriverId);
+      }
+      if (S.officeDriverId === d.id) S.officeDriverId = null;
+      closeSheet(true);
+      render();
+      toast('ลบคนขับแล้ว');
+    });
+};
+
+/* ======================= ตั้งค่า ======================= */
+
+ACT['settings-open'] = async () => {
+  const q = await DB.quota();
+  const pu = await DB.photos.usage();
+
+  let h = sheetHead('ตั้งค่า', 'คนขับ พื้นที่เก็บข้อมูล');
+
+  h += '<div class="sec-h"><span class="sec-t">คนขับ / รถ</span>' +
+    '<button class="btn btn-sm" type="button" data-act="driver-new">' + ICO.plus + ' เพิ่ม</button></div>';
+  h += S.drivers.map((d) =>
+    '<button class="row" type="button" data-act="driver-edit" data-id="' + esc(d.id) + '">' +
+    '<div class="row-ico">' + esc(initials(d.name)) + '</div>' +
+    '<div class="row-main"><div class="row-t">' + esc(d.name) + '</div>' +
+    '<div class="row-s">' + esc([d.vehicle, d.phone].filter(Boolean).join(' · ') || 'ยังไม่ใส่ทะเบียนรถ') + '</div></div>' +
+    '<div class="row-x">' + ICO.chev + '</div></button>').join('');
+
+  h += '<div class="divider"></div><div class="sec-h"><span class="sec-t">พื้นที่เก็บข้อมูลในเครื่องนี้</span></div>' +
+    '<div class="dl">' +
+    '<div class="dl-r"><div class="dl-k">ร้านค้า</div><div class="dl-v tnum">' + S.stores.length + '</div></div>' +
+    '<div class="dl-r"><div class="dl-k">งานทั้งหมด</div><div class="dl-v tnum">' + S.jobs.length + '</div></div>' +
+    '<div class="dl-r"><div class="dl-k">รูปถ่าย</div><div class="dl-v tnum">' + pu.count + ' รูป · ' + byteLabel(pu.bytes) + '</div></div>' +
+    (q ? '<div class="dl-r"><div class="dl-k">ใช้ไปทั้งหมด</div><div class="dl-v">' + byteLabel(q.used) +
+      (q.total ? ' จาก ' + byteLabel(q.total) : '') + '</div></div>' : '') +
+    '</div>';
+
+  h += '<div class="note" style="margin-bottom:13px"><span class="ni">⚠️</span>' +
+    '<div>ข้อมูลทั้งหมดเก็บอยู่ในเบราว์เซอร์ของเครื่องนี้เครื่องเดียว ' +
+    'ถ้าล้างข้อมูลเบราว์เซอร์หรือเปลี่ยนเครื่อง ข้อมูลจะหาย ' +
+    '<b>ควรกดสำรองข้อมูลเก็บไว้ทุกสัปดาห์</b></div></div>';
+
+  h += '<button class="btn btn-block" style="margin-bottom:8px" type="button" data-act="backup-open">' + ICO.dl + ' ไปหน้าสำรองข้อมูล</button>';
+  h += '<button class="btn btn-danger btn-block" type="button" data-act="wipe">ลบข้อมูลทั้งหมดในเครื่องนี้</button>';
+
+  openSheet(h);
+};
+
+ACT['wipe'] = () => {
+  confirmSheet('ลบข้อมูลทั้งหมด?',
+    'ร้านค้า งาน รูปถ่าย และคนขับทั้งหมดจะถูกลบถาวร <b>กู้คืนไม่ได้</b> ' +
+    'ถ้ายังไม่ได้สำรองข้อมูล ให้กดยกเลิกแล้วไปสำรองก่อน',
+    'ลบทั้งหมด', true, async () => {
+      await DB.wipe();
+      await DB.meta.set('myDriverId', null);
+      await reload();
+      await DB.drivers.put({ name: 'ฉัน', vehicle: '', phone: '', order: 1 });
+      await reload();
+      S.myDriverId = S.drivers[0].id;
+      await DB.meta.set('myDriverId', S.myDriverId);
+      closeSheet(true);
+      render();
+      toast('ลบข้อมูลทั้งหมดแล้ว');
+    });
+};
+
+/* ======================= สำรองข้อมูล ======================= */
+
+function download(filename, content, type) {
+  const blob = (content instanceof Blob) ? content : new Blob([content], { type: type || 'application/octet-stream' });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement('a');
+  a.href = url;
+  a.download = filename;
+  document.body.appendChild(a);
+  a.click();
+  setTimeout(() => { a.remove(); URL.revokeObjectURL(url); }, 1500);
+}
+
+ACT['backup-open'] = async () => {
+  const pu = await DB.photos.usage();
+  openSheet(
+    sheetHead('สำรองและกู้คืนข้อมูล') +
+    '<div class="note info" style="margin-bottom:14px"><span class="ni">☁️</span>' +
+    '<div>กดสำรองแล้วไฟล์จะถูกดาวน์โหลดลงเครื่อง จากนั้นเปิดแอป Google Drive แล้วอัปโหลดไฟล์นั้นเก็บไว้ ' +
+    'หรือในมือถือกดแชร์ไฟล์ไปที่ Drive ได้เลย<br><br>' +
+    'ไฟล์นี้เอากลับมาใส่เครื่องใหม่ได้ทั้งหมด รวมรูปถ่าย</div></div>' +
+
+    '<div class="sec-h"><span class="sec-t">สำรองข้อมูล</span></div>' +
+    '<button class="btn btn-pri btn-block" style="margin-bottom:8px" type="button" data-act="backup-full">' +
+    ICO.dl + ' สำรองทั้งหมด รวมรูป (' + byteLabel(pu.bytes) + ')</button>' +
+    '<button class="btn btn-block" style="margin-bottom:8px" type="button" data-act="backup-light">' +
+    ICO.dl + ' สำรองเฉพาะข้อมูล ไม่รวมรูป (ไฟล์เล็ก)</button>' +
+    '<button class="btn btn-block" type="button" data-act="export-jobs-all">' +
+    ICO.dl + ' ส่งออกงานทั้งหมดเป็น CSV (เปิดใน Excel)</button>' +
+
+    '<div class="divider"></div>' +
+    '<div class="sec-h"><span class="sec-t">กู้คืนจากไฟล์สำรอง</span></div>' +
+    '<button class="btn btn-block" style="margin-bottom:8px" type="button" data-act="restore" data-mode="merge">' +
+    'กู้คืนแบบรวมกับข้อมูลเดิม</button>' +
+    '<button class="btn btn-danger btn-block" type="button" data-act="restore" data-mode="replace">' +
+    'กู้คืนแบบล้างของเดิมทิ้งก่อน</button>' +
+    '<div class="f-hint" style="margin-top:9px">แบบรวมเหมาะกับการย้ายเครื่องหรือเพิ่มข้อมูล ' +
+    'แบบล้างเหมาะกับการย้อนกลับไปใช้ไฟล์สำรองเก่า</div>'
+  );
+};
+
+function stamp() {
+  const d = new Date();
+  const p = (n) => String(n).padStart(2, '0');
+  return d.getFullYear() + p(d.getMonth() + 1) + p(d.getDate()) + '-' + p(d.getHours()) + p(d.getMinutes());
+}
+
+ACT['backup-full'] = async () => {
+  toast('กำลังเตรียมไฟล์สำรอง...');
+  const data = await DB.exportAll(true);
+  download('delivery-backup-' + stamp() + '.json', JSON.stringify(data), 'application/json');
+  toast('สำรองข้อมูลแล้ว อย่าลืมอัปขึ้น Google Drive', 'ok', 4500);
+};
+
+ACT['backup-light'] = async () => {
+  const data = await DB.exportAll(false);
+  download('delivery-data-' + stamp() + '.json', JSON.stringify(data), 'application/json');
+  toast('สำรองข้อมูล (ไม่รวมรูป) แล้ว', 'ok');
+};
+
+ACT['restore'] = (el) => {
+  window._restoreMode = el.dataset.mode;
+  if (el.dataset.mode === 'replace') {
+    confirmSheet('ล้างของเดิมแล้วกู้คืน?',
+      'ข้อมูลที่มีอยู่ในเครื่องนี้จะถูกลบก่อน แล้วใส่ข้อมูลจากไฟล์สำรองเข้าไปแทน',
+      'เลือกไฟล์', true, async () => { document.getElementById('restoreInput').click(); });
+  } else {
+    document.getElementById('restoreInput').click();
+  }
+};
+
+/* ======================= ส่งออก CSV ======================= */
+
+function csv(rows) {
+  const cell = (v) => {
+    const s = (v === undefined || v === null) ? '' : String(v);
+    return /[",\n]/.test(s) ? '"' + s.replace(/"/g, '""') + '"' : s;
+  };
+  return '﻿' + rows.map((r) => r.map(cell).join(',')).join('\r\n');
+}
+
+function jobRows(list) {
+  const rows = [[
+    'วันที่', 'ลำดับ', 'ประเภท', 'ร้านค้า', 'รหัสร้าน', 'คนขับ', 'สถานะ',
+    'เลขที่บิล/เอกสาร', 'ยอดเงิน', 'เก็บเงินปลายทาง', 'รับจริง', 'วิธีรับ',
+    'เลขที่เช็ค', 'ธนาคาร', 'วันที่ลงเช็ค',
+    'สาเหตุไม่สำเร็จ', 'รายละเอียด', 'นัดใหม่', 'รอบที่',
+    'เวลาถึงร้าน', 'เวลาปิดงาน', 'จำนวนรูป', 'หมายเหตุ'
+  ]];
+  list.forEach((j) => {
+    const st = storeById(j.storeId);
+    const drv = driverById(j.driverId);
+    const p = j.pay || {};
+    const c = j.cod || {};
+    const b = j.bill || {};
+    rows.push([
+      j.date, j.seq || '', (TY[j.type] || {}).label || j.type,
+      j.storeName || (st && st.name) || '', (st && st.code) || '',
+      drv ? drv.name : '', (ST[j.status] || {}).label || j.status,
+      j.billNo || b.docNo || (p.billRefs || []).join(' '),
+      jobAmount(j) || '',
+      c.on ? c.expected : '', c.on ? c.received : '', c.on ? (PAY[c.method] || {}).label || '' : '',
+      p.chequeNo || '', p.bank || '', p.chequeDate || '',
+      (j.fail && j.fail.reason) || '', (j.fail && j.fail.note) || '',
+      j.rescheduledTo || '', j.round || 1,
+      clockOf(j.arrivedAt), clockOf(j.closedAt),
+      (j.photos || []).length, j.note || ''
+    ]);
+  });
+  return rows;
+}
+
+ACT['export-jobs'] = () => {
+  const list = jobsOfDay(S.date, null);
+  if (!list.length) { toast('วันนี้ยังไม่มีงาน', 'bad'); return; }
+  download('งาน-' + S.date + '.csv', csv(jobRows(list)), 'text/csv;charset=utf-8');
+  toast('ส่งออกแล้ว', 'ok');
+};
+
+ACT['export-jobs-all'] = () => {
+  const list = S.jobs.slice().sort((a, b) =>
+    String(a.date).localeCompare(String(b.date)) || (a.seq || 0) - (b.seq || 0));
+  if (!list.length) { toast('ยังไม่มีงาน', 'bad'); return; }
+  download('งานทั้งหมด-' + stamp() + '.csv', csv(jobRows(list)), 'text/csv;charset=utf-8');
+  toast('ส่งออกแล้ว', 'ok');
+};
+
+ACT['export-failed'] = () => {
+  const list = S.jobs.filter((j) => j.status === 'failed')
+    .sort((a, b) => String(b.date).localeCompare(String(a.date)));
+  if (!list.length) { toast('ไม่มีข้อมูล', 'bad'); return; }
+  download('ปิดงานไม่สำเร็จ-' + stamp() + '.csv', csv(jobRows(list)), 'text/csv;charset=utf-8');
+  toast('ส่งออกแล้ว', 'ok');
+};
+
+ACT['export-cheques'] = () => {
+  const list = jobsOfDay(S.date, null).filter((j) =>
+    j.status === 'done' && j.type === 'cheque' && j.pay && (j.pay.method || 'cheque') === 'cheque');
+  if (!list.length) { toast('วันนี้ยังไม่มีเช็ครับเข้า', 'bad'); return; }
+  const rows = [['วันที่รับ', 'ร้านค้า', 'เลขที่เช็ค', 'ธนาคาร', 'วันที่ลงเช็ค', 'ยอดเงิน', 'ตัดบิล', 'คนขับ']];
+  list.forEach((j) => {
+    const drv = driverById(j.driverId);
+    rows.push([j.date, j.storeName, j.pay.chequeNo, j.pay.bank, j.pay.chequeDate,
+      j.pay.amount, (j.pay.billRefs || []).join(' '), drv ? drv.name : '']);
+  });
+  download('เช็ครับเข้า-' + S.date + '.csv', csv(rows), 'text/csv;charset=utf-8');
+  toast('ส่งออกแล้ว', 'ok');
+};
