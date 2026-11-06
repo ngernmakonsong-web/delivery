@@ -27,13 +27,19 @@ const MapView = (function () {
 
   function jobList() {
     const drvId = S.mode === 'driver' ? S.myDriverId : S.officeDriverId;
-    return jobsOfDay(S.date, drvId);
+    return jobsOfDay(S.date, drvId);   // ออฟฟิศไม่เลือกใคร = ได้งานทุกคน
   }
 
   function pinClass(j) {
     if (j.status === 'done') return 'pin-done';
     if (j.status === 'failed') return 'pin-failed';
     return (TY[j.type] || TY.deliver).pin;
+  }
+
+  /** สีหมุด: ดูภาพรวมใช้สีประจำคนขับ จะได้รู้ว่าหมุดไหนของใคร */
+  function pinStyle(j) {
+    if (!isAllDriversView() || CLOSED[j.status]) return '';
+    return ' style="background:' + driverColor(j.driverId) + '"';
   }
 
   function drawJobs() {
@@ -50,7 +56,7 @@ const MapView = (function () {
       if (!st || st.lat === undefined || st.lat === null) { noPin++; return; }
       const icon = L.divIcon({
         className: '',
-        html: '<div class="pin ' + pinClass(j) + '"><span>' + (j.seq || '•') + '</span></div>',
+        html: '<div class="pin ' + pinClass(j) + '"' + pinStyle(j) + '><span>' + (j.seq || '•') + '</span></div>',
         iconSize: [28, 28],
         iconAnchor: [14, 26]
       });
@@ -174,7 +180,7 @@ const MapView = (function () {
       const m = L.marker([p.lat, p.lng], {
         icon: L.divIcon({
           className: '',
-          html: '<div class="drv-dot"' + (stale ? ' style="background:var(--ink-4)"' : '') + '>' +
+          html: '<div class="drv-dot" style="background:' + (stale ? '#9ca3af' : driverColor(p.driverId)) + '">' +
             esc(initials(d.name)) + '</div>',
           iconSize: [30, 26], iconAnchor: [15, 13]
         }),
@@ -186,21 +192,71 @@ const MapView = (function () {
     });
   }
 
-  /** เส้นทางจริงบนถนน ตามแผนของวันนี้ */
+  /** วาดเส้นทางหนึ่งเส้น ขอบขาวด้านล่างเพื่อให้เห็นชัดบนภาพดาวเทียม */
+  function routeLayers(geo, color, estimated) {
+    return [
+      L.polyline(geo, { color: '#ffffff', weight: 9, opacity: 0.9, lineJoin: 'round' }),
+      L.polyline(geo, {
+        color: color, weight: 5, opacity: 0.95, lineJoin: 'round',
+        dashArray: estimated ? '9 8' : null
+      })
+    ];
+  }
+
+  /** เส้นทางจริงบนถนน
+   *  ออฟฟิศดูภาพรวม = วาดทุกคัน แยกสีคนละสี
+   *  ดูรายคนหรือมุมมองคนขับ = วาดเส้นเดียว */
   function drawRoute() {
     if (!map) return;
     if (routeLine) { map.removeLayer(routeLine); routeLine = null; }
-    const p = S.plan;
-    if (!p || !p.geometry || p.geometry.length < 2) return;
-    routeLine = L.layerGroup([
-      L.polyline(p.geometry, { color: '#ffffff', weight: 9, opacity: 0.85, lineJoin: 'round' }),
-      L.polyline(p.geometry, {
-        color: p.estimated ? '#9ca3af' : '#1a73e8',
-        weight: 5, opacity: 0.95, lineJoin: 'round',
-        dashArray: p.estimated ? '9 8' : null
-      })
-    ]).addTo(map);
+
+    const layers = [];
+
+    if (isAllDriversView()) {
+      const plans = S.plans || {};
+      Object.keys(plans).forEach((did) => {
+        const p = plans[did];
+        if (!p.geometry || p.geometry.length < 2) return;
+        routeLayers(p.geometry, p.color, p.estimated).forEach((l) => layers.push(l));
+      });
+    } else {
+      const p = S.plan;
+      if (p && p.geometry && p.geometry.length > 1) {
+        const color = driverColor(activeDriverId());
+        routeLayers(p.geometry, color, p.estimated).forEach((l) => layers.push(l));
+      }
+    }
+
+    if (!layers.length) return;
+    routeLine = L.layerGroup(layers).addTo(map);
     routeLine.eachLayer((l) => l.bringToBack());
+  }
+
+  /** ป้ายบอกว่าสีไหนเป็นของใคร */
+  function drawLegend() {
+    const wrap = document.getElementById('mapwrap');
+    if (!wrap) return;
+    const old = wrap.querySelector('.maplegend');
+    if (old) old.remove();
+    if (!isAllDriversView()) return;
+
+    const plans = S.plans || {};
+    const ids = Object.keys(plans);
+    if (!ids.length) return;
+
+    const el = document.createElement('div');
+    el.className = 'maplegend';
+    el.innerHTML = ids.map((did) => {
+      const d = driverById(did);
+      const p = plans[did];
+      return '<button class="lg-row" type="button" data-act="pick-driver" data-id="' + esc(did) + '">' +
+        '<i style="background:' + p.color + '"></i>' +
+        '<span class="lg-n">' + esc(d ? d.name : '-') + '</span>' +
+        '<span class="lg-d">' + p.stops + ' ร้าน · ' + Route.km(p.total.distance) +
+        ' · ' + Route.mins(p.total.duration) + '</span>' +
+        '</button>';
+    }).join('');
+    wrap.appendChild(el);
   }
 
   function drawMe() {
@@ -239,6 +295,7 @@ const MapView = (function () {
 
     didFit = false;
     drawRoute();
+    drawLegend();
     drawJobs();
     drawDrivers();
     drawMe();
@@ -272,6 +329,7 @@ const MapView = (function () {
   function refresh() {
     if (!map) return;
     drawRoute();
+    drawLegend();
     drawJobs();
     drawDrivers();
     drawMe();

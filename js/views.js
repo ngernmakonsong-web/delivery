@@ -89,8 +89,11 @@ function jobCard(j, opts) {
     ? distKm(S.pos, { lat: st.lat, lng: st.lng }) : null;
   const drv = opts.showDriver ? driverById(j.driverId) : null;
 
+  const tint = (typeof isAllDriversView === 'function' && isAllDriversView() && j.driverId)
+    ? ' style="box-shadow:inset 4px 0 0 ' + driverColor(j.driverId) + ', var(--shadow)"' : '';
+
   return '<div class="job' + (j.status === 'done' ? ' is-done' : '') + (j.status === 'failed' ? ' is-failed' : '') +
-    (openable ? '' : ' is-locked') + '">' +
+    (openable ? '' : ' is-locked') + '"' + tint + '>' +
     '<div class="job-seq t-' + j.type + '"' + tap + '>' +
       '<span>' + (j.seq || '–') + '</span><span class="sq-ico">' + t.ico + '</span>' +
     '</div>' +
@@ -298,11 +301,14 @@ Views.assign = function () {
       S.drivers.forEach((d) => {
         const list = jobsOfDay(S.date, d.id);
         const p = progressOf(list);
+        const plan = (S.plans || {})[d.id];
         h += '<button class="row" type="button" data-act="pick-driver" data-id="' + esc(d.id) + '">' +
-          '<div class="row-ico">' + esc(initials(d.name)) + '</div>' +
+          '<div class="row-ico" style="background:' + driverColor(d.id) + ';color:#fff">' +
+          esc(initials(d.name)) + '</div>' +
           '<div class="row-main">' +
             '<div class="row-t">' + esc(d.name) + (d.vehicle ? ' <span class="muted" style="font-weight:400">· ' + esc(d.vehicle) + '</span>' : '') + '</div>' +
-            '<div class="row-s">' + (list.length ? p.done + ' สำเร็จ · ' + p.failed + ' ไม่สำเร็จ · เหลือ ' + p.open : 'ไม่มีงานวันนี้') + '</div>' +
+            '<div class="row-s">' + (list.length ? p.done + ' สำเร็จ · ' + p.failed + ' ไม่สำเร็จ · เหลือ ' + p.open : 'ไม่มีงานวันนี้') +
+              (plan ? ' · ' + Route.km(plan.total.distance) + ' · ' + Route.mins(plan.total.duration) : '') + '</div>' +
             (list.length ? '<div style="margin-top:6px">' + progressBar(p) + '</div>' : '') +
           '</div>' +
           '<div class="row-x">' + ICO.chev + '</div></button>';

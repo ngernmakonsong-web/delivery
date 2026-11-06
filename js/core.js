@@ -277,7 +277,8 @@ const S = {
   search: '',
   ready: false,
   transfers: [],          // คำขอย้ายงานที่ยังค้าง
-  plan: null,             // แผนเส้นทางของวัน (ระยะ เวลา และเส้นสำหรับวาดแผนที่)
+  plan: null,             // แผนเส้นทางของคนขับที่กำลังดูอยู่
+  plans: {},              // แผนเส้นทางของทุกคน ใช้ตอนออฟฟิศดูภาพรวม
   cloud: false,           // ต่อเซิร์ฟเวอร์กลางอยู่หรือไม่
   me: null,               // โปรไฟล์ของคนที่ล็อกอิน
   role: 'admin',          // driver | office | admin
@@ -346,6 +347,24 @@ async function reloadTransfers() {
 
 /* ======================= แผนเส้นทางของวัน ======================= */
 
+/* สีประจำตัวคนขับ ใช้ทั้งเส้นทาง หมุด และป้ายชื่อ
+   เลือกให้ต่างกันชัดเจน แยกออกแม้ตาบอดสีบางประเภท */
+const DRIVER_COLORS = [
+  '#1a73e8', '#d94f04', '#7c3aed', '#0d9488',
+  '#c2185b', '#b45309', '#2e7d32', '#4338ca',
+  '#0891b2', '#9d174d', '#4d7c0f', '#a21caf'
+];
+
+function driverColor(driverId) {
+  if (!driverId) return '#6b7280';
+  const i = S.drivers.findIndex((d) => d.id === driverId);
+  if (i >= 0) return DRIVER_COLORS[i % DRIVER_COLORS.length];
+  // คนขับที่ถูกลบไปแล้ว ใช้ค่าคงที่จากรหัส จะได้ไม่เปลี่ยนไปมา
+  let h = 0;
+  for (let k = 0; k < driverId.length; k++) h = (h * 31 + driverId.charCodeAt(k)) >>> 0;
+  return DRIVER_COLORS[h % DRIVER_COLORS.length];
+}
+
 /** จุดแวะของงาน (ตำแหน่งร้าน) */
 function jobPoint(j) {
   const st = storeById(j.storeId);
@@ -404,14 +423,80 @@ function legOf(jobId) {
   return (S.plan && S.plan.byJob && S.plan.byJob[jobId]) || null;
 }
 
+/**
+ * คำนวณเส้นทางของคนขับทุกคนที่มีงานค้างในวันนั้น
+ * ใช้ตอนออฟฟิศดูภาพรวม จะได้เห็นทุกคันพร้อมกัน แยกสีคนละสี
+ * จุดเริ่มของแต่ละคันใช้ตำแหน่งล่าสุดที่ส่งเข้ามา ถ้าไม่มีก็เริ่มจากร้านแรก
+ */
+async function computeAllPlans() {
+  const out = {};
+  const posByDriver = {};
+  (S.positions || []).forEach((p) => { posByDriver[p.driverId] = p; });
+
+  for (const d of S.drivers) {
+    const open = jobsOfDay(S.date, d.id).filter((j) => !CLOSED[j.status]);
+    const stops = [];
+    open.forEach((j) => {
+      const p = jobPoint(j);
+      if (p) stops.push({ jobId: j.id, p: p });
+    });
+    if (!stops.length) continue;
+
+    const mine = (S.me && S.me.id === d.id) ? S.pos : null;
+    const last = mine || posByDriver[d.id];
+    const fresh = last && (!last.at || Date.now() - new Date(last.at).getTime() < 30 * 60000);
+
+    const pts = [];
+    if (fresh) pts.push({ lat: last.lat, lng: last.lng });
+    stops.forEach((s) => pts.push(s.p));
+    if (pts.length < 2) continue;
+
+    let r = null;
+    try { r = await Route.plan(pts); } catch (e) { r = null; }
+    if (!r) continue;
+
+    const byJob = {};
+    stops.forEach((s, i) => {
+      const li = fresh ? i : i - 1;
+      if (li >= 0 && r.legs[li]) byJob[s.jobId] = r.legs[li];
+    });
+
+    out[d.id] = {
+      driverId: d.id,
+      color: driverColor(d.id),
+      byJob: byJob,
+      geometry: r.geometry,
+      total: r.total,
+      estimated: r.estimated,
+      fromMe: !!fresh,
+      stops: stops.length,
+      firstJobId: stops[0].jobId
+    };
+  }
+
+  S.plans = out;
+  return out;
+}
+
+/** ดูภาพรวมทุกคันอยู่หรือเปล่า */
+function isAllDriversView() {
+  return S.mode === 'office' && !S.officeDriverId;
+}
+
 /** คำนวณเส้นทางใหม่แล้ววาดหน้าจอซ้ำ เรียกได้บ่อยไม่เปลือง เพราะมีแคช */
 let _planT = null;
 function refreshPlan(force) {
   clearTimeout(_planT);
   _planT = setTimeout(async () => {
-    const before = JSON.stringify(S.plan && S.plan.total);
-    await computePlan();
-    const after = JSON.stringify(S.plan && S.plan.total);
+    const before = JSON.stringify([S.plan && S.plan.total, Object.keys(S.plans || {})]);
+    if (isAllDriversView()) {
+      await computeAllPlans();
+      S.plan = null;
+    } else {
+      await computePlan();
+      S.plans = {};
+    }
+    const after = JSON.stringify([S.plan && S.plan.total, Object.keys(S.plans || {})]);
     if (force || before !== after) {
       if (!sheetOpen()) render();
       else if (S.screen === 'map' && typeof MapView !== 'undefined') MapView.refresh();
@@ -846,10 +931,11 @@ ACT['mode'] = async () => {
   const items = NAV[S.mode];
   if (!items.some((i) => i.k === S.screen)) S.screen = items[0].k;
   render();
+  refreshPlan(true);
 };
 
-ACT['date-prev'] = () => { S.date = addDays(S.date, -1); render(); };
-ACT['date-next'] = () => { S.date = addDays(S.date, 1); render(); };
+ACT['date-prev'] = () => { S.date = addDays(S.date, -1); render(); refreshPlan(true); };
+ACT['date-next'] = () => { S.date = addDays(S.date, 1); render(); refreshPlan(true); };
 
 ACT['date-pick'] = () => {
   openSheet(
@@ -864,11 +950,11 @@ ACT['date-pick'] = () => {
     '<button class="btn btn-pri btn-block" type="button" data-act="date-apply">ตกลง</button>'
   );
 };
-ACT['date-set'] = (el) => { S.date = el.dataset.d; closeSheet(true); render(); };
+ACT['date-set'] = (el) => { S.date = el.dataset.d; closeSheet(true); render(); refreshPlan(true); };
 ACT['date-apply'] = () => {
   const v = document.getElementById('dp').value;
   if (v) S.date = v;
-  closeSheet(true); render();
+  closeSheet(true); render(); refreshPlan(true);
 };
 
 ACT['pick-driver'] = async (el) => {
@@ -881,6 +967,7 @@ ACT['pick-driver'] = async (el) => {
     S.officeDriverId = id;
   }
   render();
+  refreshPlan(true);
 };
 
 ACT['gps-info'] = () => {
