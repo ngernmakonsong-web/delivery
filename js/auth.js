@@ -12,7 +12,7 @@ function authShell(inner) {
     inner + '</div></div>';
 }
 
-function renderLogin(msg) {
+function renderLogin(msg, offerFirstRun) {
   document.body.classList.add('auth-mode');
   document.getElementById('screen').innerHTML = authShell(
     '<p class="auth-s">เข้าสู่ระบบเพื่อดูงานของคุณ</p>' +
@@ -23,6 +23,10 @@ function renderLogin(msg) {
     '<input type="password" id="liPass" autocomplete="current-password" placeholder="รหัสผ่าน"></div>' +
     '<div class="f-err" id="authErr" style="display:none"></div>' +
     '<button class="btn btn-pri btn-block" type="button" data-act="login">เข้าสู่ระบบ</button>' +
+    (offerFirstRun
+      ? '<button class="btn btn-ghost btn-block" style="margin-top:9px" type="button" data-act="go-first-run">' +
+        'ยังไม่มีบัญชีผู้ดูแล สร้างคนแรก</button>'
+      : '') +
     '<p class="auth-foot">ลืมรหัสผ่าน หรือยังไม่มีบัญชี ติดต่อหัวหน้างานให้สร้างให้</p>'
   );
   const u = document.getElementById('liUser');
@@ -47,7 +51,8 @@ function renderFirstRun() {
     '<div class="f"><label for="suPass2">ยืนยันรหัสผ่าน</label>' +
     '<input type="password" id="suPass2" autocomplete="new-password"></div>' +
     '<div class="f-err" id="authErr" style="display:none"></div>' +
-    '<button class="btn btn-pri btn-block" type="button" data-act="signup-first">สร้างบัญชีผู้ดูแล</button>'
+    '<button class="btn btn-pri btn-block" type="button" data-act="signup-first">สร้างบัญชีผู้ดูแล</button>' +
+    '<button class="btn btn-ghost btn-block" style="margin-top:9px" type="button" data-act="go-login">มีบัญชีอยู่แล้ว เข้าสู่ระบบ</button>'
   );
 }
 
@@ -70,6 +75,8 @@ function validUsername(u) {
 }
 
 ACT['reload-app'] = () => location.reload();
+ACT['go-first-run'] = () => renderFirstRun();
+ACT['go-login'] = () => renderLogin();
 
 ACT['login'] = async () => {
   const u = (document.getElementById('liUser').value || '').trim();

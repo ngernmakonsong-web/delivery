@@ -839,14 +839,19 @@ async function boot() {
     return;
   }
 
-  const has = await Cloud.hasAnyAdmin();
-  if (has === null) {
+  // ตารางพร้อมหรือยัง ถามจากตาราง profiles โดยตรง เชื่อถือได้กว่าถามฟังก์ชัน
+  const tablesOk = await Cloud.tablesReady();
+  if (!tablesOk) {
     renderAuthError('ยังตั้งค่าฐานข้อมูลไม่เสร็จ',
       'ยังไม่ได้รันสคริปต์สร้างตารางใน Supabase หรือค่าที่ตั้งไว้ไม่ถูกต้อง<br>' +
       'ให้ผู้ดูแลเปิด Supabase → SQL Editor แล้วรันไฟล์ <b>supabase-setup.sql</b>');
     return;
   }
-  if (has) renderLogin(); else renderFirstRun();
+
+  // มีผู้ดูแลแล้วหรือยัง ถ้าถามไม่ได้ก็ไม่เป็นไร ขึ้นหน้าล็อกอินพร้อมทางเลือกให้
+  const has = await Cloud.hasAnyAdmin();
+  if (has === false) renderFirstRun();
+  else renderLogin(null, has === null);
 }
 
 /** เริ่มแอปหลังผ่านการยืนยันตัวตนแล้ว (หรือในโหมดเก็บข้อมูลในเครื่อง) */

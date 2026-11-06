@@ -217,8 +217,19 @@
     return 'สร้างบัญชีไม่ได้: ' + m;
   }
 
+  /** ตารางหลักถูกสร้างแล้วหรือยัง */
+  async function tablesReady() {
+    try {
+      const { error } = await sb.from('profiles').select('id', { count: 'exact', head: true });
+      if (!error) return true;
+      // ตารางไม่มีจริง ๆ จะได้รหัส 42P01 หรือข้อความว่าไม่พบใน schema cache
+      return false;
+    } catch (e) { return false; }
+  }
+
   /** ถามเซิร์ฟเวอร์ว่ามีผู้ดูแลแล้วหรือยัง ใช้ได้ตั้งแต่ยังไม่ล็อกอิน
-   *  คืน null ถ้าถามไม่ได้ (ยังไม่ได้รัน SQL ตั้งระบบ) */
+   *  คืน null ถ้าถามไม่ได้ เช่น Supabase ยังไม่รีเฟรชรายการฟังก์ชัน
+   *  กรณีนั้นแอปจะขึ้นหน้าล็อกอินพร้อมทางเลือกสร้างผู้ดูแลคนแรกแทน */
   async function hasAnyAdmin() {
     try {
       const { data, error } = await sb.rpc('system_initialized');
@@ -444,7 +455,7 @@
     current: current, isOffice: isOffice, isAdmin: isAdmin,
     loadMe: loadMe, signIn: signIn, signOut: signOut,
     signUpFirst: signUpFirst, createUser: createUser,
-    hasAnyAdmin: hasAnyAdmin, changePassword: changePassword,
+    hasAnyAdmin: hasAnyAdmin, tablesReady: tablesReady, changePassword: changePassword,
     stores: stores, jobs: jobs, drivers: drivers,
     photos: photos, meta: meta,
     pushPosition: pushPosition, allPositions: allPositions,
