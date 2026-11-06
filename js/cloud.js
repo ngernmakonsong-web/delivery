@@ -159,20 +159,65 @@
     me = null;
   }
 
-  /** สมัครบัญชีแรกของระบบ (ผู้ดูแล) */
-  async function signUpFirst(username, password, name) {
-    const { data, error } = await sb.auth.signUp({ email: emailOf(username), password: password });
-    if (error) throw new Error(mapSignUpError(error));
-    const uid = data.user && data.user.id;
-    if (!uid) throw new Error('สร้างบัญชีไม่สำเร็จ');
-    if (!data.session) {
-      await sb.auth.signInWithPassword({ email: emailOf(username), password: password });
+  /** ข้อผิดพลาดนี้เกิดจาก Supabase ยังไม่รีเฟรชรายการตาราง ไม่ใช่ตารางไม่มีจริง */
+  function isSchemaCacheMiss(err) {
+    const m = String((err && err.message) || '');
+    return m.indexOf('schema cache') > -1 || err.code === 'PGRST205' || err.code === 'PGRST202';
+  }
+
+  /** ลองใหม่สองสามครั้งเมื่อเจอแคชยังไม่อัปเดต เพราะเดี๋ยวมันก็มาเอง */
+  async function withRetry(fn, tries) {
+    tries = tries || 4;
+    let last = null;
+    for (let i = 0; i < tries; i++) {
+      const r = await fn();
+      if (!r.error) return r;
+      last = r.error;
+      if (!isSchemaCacheMiss(r.error)) break;
+      await new Promise((res) => setTimeout(res, 1200 * (i + 1)));
     }
-    const { error: e2 } = await sb.from('profiles').insert({
+    return { error: last };
+  }
+
+  /** สมัครบัญชีแรกของระบบ (ผู้ดูแล)
+   *  ทำซ้ำได้ ถ้าครั้งก่อนสร้างบัญชีไปแล้วแต่บันทึกข้อมูลผู้ใช้ไม่สำเร็จ
+   *  กดใหม่ด้วยชื่อและรหัสผ่านเดิมจะทำต่อจากจุดที่ค้างให้เอง */
+  async function signUpFirst(username, password, name) {
+    const email = emailOf(username);
+    let uid = null;
+
+    const { data, error } = await sb.auth.signUp({ email: email, password: password });
+    if (error) {
+      const m = String(error.message || '');
+      const existed = m.indexOf('already registered') > -1 || m.indexOf('already been registered') > -1;
+      if (!existed) throw new Error(mapSignUpError(error));
+      // บัญชีมีอยู่แล้วจากการกดครั้งก่อน ลองเข้าระบบด้วยรหัสเดิม
+      const { data: d2, error: e2 } = await sb.auth.signInWithPassword({ email: email, password: password });
+      if (e2) throw new Error('ชื่อผู้ใช้นี้ถูกสร้างไว้แล้วแต่รหัสผ่านไม่ตรง ' +
+        'ถ้าจำรหัสที่ตั้งครั้งก่อนไม่ได้ ให้ใช้ชื่อผู้ใช้อื่น');
+      uid = d2.user.id;
+    } else {
+      uid = data.user && data.user.id;
+      if (!data.session) {
+        const { error: e3 } = await sb.auth.signInWithPassword({ email: email, password: password });
+        if (e3) throw new Error('สร้างบัญชีแล้วแต่เข้าระบบไม่ได้: ' + e3.message +
+          ' (อาจต้องปิด Confirm email ใน Supabase)');
+      }
+    }
+    if (!uid) throw new Error('สร้างบัญชีไม่สำเร็จ');
+
+    const r = await withRetry(() => sb.from('profiles').upsert({
       id: uid, username: String(username).trim().toLowerCase(),
       name: name, role: 'admin', sort_order: 1
-    });
-    if (e2) throw new Error('บันทึกข้อมูลผู้ใช้ไม่ได้: ' + e2.message);
+    }).select().maybeSingle());
+
+    if (r.error) {
+      if (isSchemaCacheMiss(r.error)) {
+        throw new Error('Supabase ยังไม่รีเฟรชรายการตาราง ให้เปิด SQL Editor รันคำสั่ง ' +
+          "NOTIFY pgrst, 'reload schema';  แล้วกดสร้างบัญชีนี้ใหม่ด้วยชื่อและรหัสผ่านเดิม");
+      }
+      throw new Error('บันทึกข้อมูลผู้ใช้ไม่ได้: ' + r.error.message);
+    }
     return await loadMe();
   }
 
@@ -191,7 +236,7 @@
     if (!uid) throw new Error('สร้างบัญชีไม่สำเร็จ');
     try { await tmp.auth.signOut(); } catch (e) {}
 
-    const { error: e2 } = await sb.from('profiles').insert({
+    const r = await withRetry(() => sb.from('profiles').upsert({
       id: uid,
       username: String(o.username).trim().toLowerCase(),
       name: o.name,
@@ -199,8 +244,8 @@
       vehicle: o.vehicle || null,
       phone: o.phone || null,
       sort_order: o.order || 100
-    });
-    if (e2) throw new Error('สร้างผู้ใช้ได้แต่บันทึกข้อมูลไม่ได้: ' + e2.message);
+    }));
+    if (r.error) throw new Error('สร้างบัญชีได้แต่บันทึกข้อมูลไม่ได้: ' + r.error.message);
     notify('drivers');
     return uid;
   }
