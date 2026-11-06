@@ -4,7 +4,7 @@
    ข้อมูลงานทั้งหมดอยู่ใน IndexedDB ไม่เกี่ยวกับแคชนี้
    =========================================================== */
 
-const CACHE = 'delivery-v1';
+const CACHE = 'delivery-v2';
 
 const SHELL = [
   './',
@@ -56,17 +56,23 @@ self.addEventListener('fetch', (e) => {
     return;
   }
 
-  // ไฟล์ของแอปเอง: ใช้แคชก่อนเพื่อเปิดเร็ว แล้วอัปเดตเบื้องหลัง
-  e.respondWith(
-    caches.match(req).then((hit) => {
-      const net = fetch(req).then((res) => {
-        if (res && res.status === 200) {
-          const copy = res.clone();
-          caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
-        }
-        return res;
-      }).catch(() => hit);
-      return hit || net;
-    })
-  );
+  // ไฟล์ของแอปเอง: เอาจากเน็ตก่อนเสมอ เพื่อให้ได้เวอร์ชันล่าสุดทันทีที่มีอัปเดต
+  // ถ้าเน็ตไม่มาภายใน 4 วินาที หรือออฟไลน์ ค่อยใช้ของในแคช
+  e.respondWith((async () => {
+    const cached = await caches.match(req);
+    try {
+      const res = await Promise.race([
+        fetch(req),
+        new Promise((_, rej) => setTimeout(() => rej(new Error('ช้าเกินไป')), 4000))
+      ]);
+      if (res && res.status === 200) {
+        const copy = res.clone();
+        caches.open(CACHE).then((c) => c.put(req, copy)).catch(() => {});
+      }
+      return res;
+    } catch (err) {
+      if (cached) return cached;
+      throw err;
+    }
+  })());
 });

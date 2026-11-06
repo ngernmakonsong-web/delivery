@@ -146,10 +146,19 @@ function telUrl(phone) {
   return 'tel:' + String(phone).replace(/[^\d+]/g, '');
 }
 
+/** ตัวย่อชื่อสำหรับวงกลมรูปโปรไฟล์
+ *  ภาษาไทยตัดตามอักษรไม่ได้ เพราะสระกับวรรณยุกต์เกาะอยู่กับพยัญชนะ
+ *  จึงตัดเป็นกลุ่มอักขระ (grapheme) แทน */
 function initials(name) {
   const s = String(name || '').trim();
   if (!s) return '?';
-  return s.slice(0, 2);
+  try {
+    const seg = new Intl.Segmenter('th', { granularity: 'grapheme' });
+    const g = Array.from(seg.segment(s), (x) => x.segment);
+    return g.slice(0, 2).join('');
+  } catch (e) {
+    return s.slice(0, 2);
+  }
 }
 
 function byteLabel(b) {
@@ -647,9 +656,34 @@ async function boot() {
     }, 90);
   });
 
-  if ('serviceWorker' in navigator) {
-    navigator.serviceWorker.register('sw.js').catch(() => {});
-  }
+  registerSW();
+}
+
+/* เมื่อมีเวอร์ชันใหม่ ให้โหลดหน้าใหม่รอบเดียวโดยอัตโนมัติ
+   ไม่งั้นผู้ใช้จะติดอยู่กับโค้ดเก่าที่ service worker เก็บไว้ */
+function registerSW() {
+  if (!('serviceWorker' in navigator)) return;
+  let reloaded = false;
+  navigator.serviceWorker.addEventListener('controllerchange', () => {
+    if (reloaded) return;
+    reloaded = true;
+    location.reload();
+  });
+  navigator.serviceWorker.register('sw.js').then((reg) => {
+    reg.addEventListener('updatefound', () => {
+      const sw = reg.installing;
+      if (!sw) return;
+      sw.addEventListener('statechange', () => {
+        if (sw.state === 'installed' && navigator.serviceWorker.controller) {
+          toast('มีเวอร์ชันใหม่ กำลังอัปเดต...', 'ok', 2000);
+        }
+      });
+    });
+    // ตรวจหาเวอร์ชันใหม่ทุกครั้งที่กลับมาเปิดแอป
+    document.addEventListener('visibilitychange', () => {
+      if (document.visibilityState === 'visible') reg.update().catch(() => {});
+    });
+  }).catch(() => {});
 }
 
 document.addEventListener('DOMContentLoaded', boot);
