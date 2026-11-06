@@ -95,11 +95,11 @@ function jobFormHtml(j, presetDate) {
   }
   h += '</div>';
 
-  /* คนขับ + วันที่ */
+  /* คนขับ + วันที่ — ต้องระบุคนขับเสมอ */
   h += '<div class="f-2" style="margin-bottom:12px">' +
-    '<div class="f"><label for="jDriver">คนขับ</label><select id="jDriver">' +
-    '<option value="">ยังไม่มอบหมาย</option>' +
-    selectOpts(S.drivers, driverId, (d) => d.id, (d) => d.name) + '</select></div>' +
+    '<div class="f"><label for="jDriver">คนขับ <span style="color:var(--s-failed)">*</span></label><select id="jDriver">' +
+    (driverId ? '' : '<option value="">— เลือกคนขับ —</option>') +
+    selectOpts(S.drivers, driverId, (d) => d.id, (d) => d.name + (d.vehicle ? ' · ' + d.vehicle : '')) + '</select></div>' +
     '<div class="f"><label for="jDate">วันที่</label><input type="date" id="jDate" value="' + esc(date) + '"></div>' +
     '</div>';
 
@@ -277,6 +277,7 @@ ACT['job-save'] = async (el) => {
   if (!storeId) { setErr('ยังไม่ได้เลือกร้านค้า'); return; }
   const st = storeById(storeId);
   if (!st) { setErr('ไม่พบร้านที่เลือก'); return; }
+  if (!driverId) { setErr('ยังไม่ได้เลือกคนขับ ทุกงานต้องระบุว่าใครเป็นคนไป'); return; }
 
   const rec = {
     id: id || undefined,
@@ -284,8 +285,8 @@ ACT['job-save'] = async (el) => {
     type: type,
     storeId: storeId,
     storeName: st.name,
-    driverId: driverId || '',
-    status: old ? old.status : (driverId ? 'assigned' : 'pending'),
+    driverId: driverId,
+    status: old ? (old.status === 'pending' ? 'assigned' : old.status) : 'assigned',
     note: val('jNote'),
     photos: old ? (old.photos || []) : [],
     events: old ? (old.events || []) : [],
@@ -550,8 +551,10 @@ ACT['close-fail'] = (el) => {
     '<div class="f-hint">ถ้าใส่วันไว้ ระบบจะสร้างงานรอบใหม่ให้อัตโนมัติในวันนั้น ' +
     'โดยยังผูกกับงานเดิมเพื่อดูประวัติย้อนหลังได้</div></div>';
 
-  h += '<label class="check" style="margin-bottom:13px">' +
-    '<input type="checkbox" id="fSameDriver" checked><span>ให้คนขับคนเดิมไปรอบใหม่</span></label>';
+  h += '<div class="f" id="fDriverBox"><label for="fDriver">รอบใหม่ให้ใครไป</label>' +
+    '<select id="fDriver">' +
+    selectOpts(S.drivers, j.driverId || '', (d) => d.id, (d) => d.name + (d.vehicle ? ' · ' + d.vehicle : '')) +
+    '</select></div>';
 
   h += '<div class="f-err" id="formErr" style="display:none"></div>' +
     '<button class="btn btn-danger btn-block" type="button" data-act="close-fail-save" data-id="' + esc(j.id) + '">' +
@@ -590,7 +593,8 @@ ACT['close-fail-save'] = async (el) => {
   }
 
   const resch = val('fResch');
-  const sameDriver = checked('fSameDriver');
+  const nextDriver = val('fDriver') || j.driverId || (S.drivers[0] && S.drivers[0].id) || '';
+  if (resch && !nextDriver) { setErr('นัดวันใหม่ไว้ แต่ยังไม่ได้เลือกว่าใครไปรอบใหม่'); return; }
 
   const rec = Object.assign({}, j, {
     status: 'failed',
@@ -602,14 +606,14 @@ ACT['close-fail-save'] = async (el) => {
 
   let childId = null;
   if (resch) {
-    const driverId = sameDriver ? (j.driverId || '') : '';
+    const driverId = nextDriver;
     const child = {
       date: resch,
       type: j.type,
       storeId: j.storeId,
       storeName: j.storeName,
       driverId: driverId,
-      status: driverId ? 'assigned' : 'pending',
+      status: 'assigned',
       billNo: j.billNo,
       amount: j.amount,
       items: j.items,
@@ -646,8 +650,8 @@ ACT['job-from-bill'] = async (el) => {
     type: 'cheque',
     storeId: j.storeId,
     storeName: j.storeName,
-    driverId: j.driverId || '',
-    status: j.driverId ? 'assigned' : 'pending',
+    driverId: j.driverId || (S.drivers[0] && S.drivers[0].id) || '',
+    status: 'assigned',
     pay: {
       method: 'cheque', chequeNo: '', bank: '', chequeDate: '',
       amount: num(j.amount), billRefs: (j.bill.billRefs || []).slice()
@@ -673,9 +677,10 @@ ACT['job-move'] = (el) => {
   if (!j) return;
   openSheet(
     sheetHead('ย้ายงาน', j.storeName || '', true) +
-    '<div class="f"><label for="mDriver">คนขับ</label><select id="mDriver">' +
-    '<option value="">ยังไม่มอบหมาย</option>' +
-    selectOpts(S.drivers, j.driverId || '', (d) => d.id, (d) => d.name) + '</select></div>' +
+    '<div class="f"><label for="mDriver">คนขับ <span style="color:var(--s-failed)">*</span></label><select id="mDriver">' +
+    (j.driverId ? '' : '<option value="">— เลือกคนขับ —</option>') +
+    selectOpts(S.drivers, j.driverId || '', (d) => d.id, (d) => d.name + (d.vehicle ? ' · ' + d.vehicle : '')) + '</select></div>' +
+    '<div class="f-err" id="formErr" style="display:none"></div>' +
     dateInput('mDate', 'วันที่', j.date) +
     '<button class="btn btn-pri btn-block" type="button" data-act="job-move-save" data-id="' + esc(j.id) + '">บันทึก</button>'
   );
@@ -685,12 +690,13 @@ ACT['job-move-save'] = async (el) => {
   const j = jobById(el.dataset.id);
   if (!j) return;
   const driverId = val('mDriver');
+  if (!driverId) { setErr('ยังไม่ได้เลือกคนขับ'); return; }
   const date = val('mDate') || j.date;
   const changed = (j.driverId || '') !== driverId || j.date !== date;
   const rec = Object.assign({}, j, {
     driverId: driverId,
     date: date,
-    status: (j.status === 'pending' && driverId) ? 'assigned' : j.status,
+    status: (j.status === 'pending') ? 'assigned' : j.status,
     seq: changed ? await nextSeq(date, driverId) : j.seq
   });
   await DB.jobs.put(rec);
