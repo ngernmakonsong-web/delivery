@@ -2,7 +2,7 @@
 <html lang="th">
 <head>
 <meta charset="utf-8">
-<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover, maximum-scale=1, user-scalable=no">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <meta name="theme-color" content="#0b4f45">
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
@@ -69,8 +69,9 @@
 <!-- ============ TOAST ============ -->
 <div id="toast" class="hidden"></div>
 
-<!-- hidden file input used for camera / gallery -->
+<!-- hidden file inputs: ถ่ายจากกล้อง / เลือกจากคลังภาพ / กู้คืนข้อมูล -->
 <input type="file" id="photoInput" accept="image/*" capture="environment" hidden>
+<input type="file" id="photoPick" accept="image/*" hidden>
 <input type="file" id="restoreInput" accept=".json,application/json" hidden>
 
 <script src="https://cdnjs.cloudflare.com/ajax/libs/leaflet/1.9.4/leaflet.min.js"></script>

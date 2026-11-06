@@ -61,7 +61,7 @@ function itemRow(it) {
 }
 
 function jobFormHtml(j, presetDate) {
-  const isNew = !j;
+  const isNew = !j || !j.id;
   j = j || {};
   const ty = j.type || 'deliver';
   const cod = j.cod || {};
@@ -171,8 +171,39 @@ function jobFormHtml(j, presetDate) {
   return h;
 }
 
-ACT['job-new'] = () => openSheet(jobFormHtml(null, S.date));
-ACT['job-edit'] = (el) => openSheet(jobFormHtml(jobById(el.dataset.id)));
+/** อ่านค่าที่กรอกไว้ในฟอร์มงาน เพื่อเก็บไว้ตอนแวะไปเพิ่มร้านใหม่ */
+function readJobForm() {
+  if (!document.getElementById('jType')) return null;
+  const type = val('jType') || 'deliver';
+  const d = {
+    type: type,
+    storeId: val('jStore'),
+    driverId: val('jDriver'),
+    date: val('jDate'),
+    note: val('jNote')
+  };
+  if (type === 'deliver') {
+    d.billNo = val('jBillNo');
+    d.amount = val('jAmount');
+    d.items = readItems();
+    d.cod = { on: checked('jCod'), expected: val('jCodAmt') };
+  } else if (type === 'bill') {
+    d.amount = val('jBillAmt');
+    d.bill = { docNo: val('jDocNo'), billRefs: splitRefs(val('jBillRefs')), appointmentDate: val('jAppt') };
+  } else {
+    d.pay = {
+      method: val('jPayMethod') || 'cheque',
+      chequeNo: val('jChqNo'), bank: val('jBank'), chequeDate: val('jChqDate'),
+      amount: val('jPayAmt'), billRefs: splitRefs(val('jPayRefs'))
+    };
+  }
+  return d;
+}
+
+let _jobDraft = null;
+
+ACT['job-new'] = () => { _jobDraft = null; openSheet(jobFormHtml(null, S.date)); };
+ACT['job-edit'] = (el) => { _jobDraft = null; openSheet(jobFormHtml(jobById(el.dataset.id))); };
 
 ACT['ty-pick'] = (el) => {
   const k = el.dataset.k;
@@ -807,7 +838,10 @@ function storeFormHtml(s, opts) {
 }
 
 ACT['store-new'] = () => openSheet(storeFormHtml(null));
-ACT['store-new-inline'] = () => openSheet(storeFormHtml(null, { backable: true, then: 'job' }));
+ACT['store-new-inline'] = () => {
+  _jobDraft = readJobForm();   // เก็บสิ่งที่กรอกค้างไว้ก่อน เพื่อไม่ให้หายตอนกลับมา
+  openSheet(storeFormHtml(null, { backable: true, then: 'job' }));
+};
 
 ACT['pin-here'] = async (el) => {
   el.disabled = true;
@@ -859,18 +893,12 @@ ACT['store-save'] = async (el) => {
   await reload();
 
   if (then === 'job') {
-    closeSheet();
-    const sel = document.getElementById('jStore');
-    if (sel) {
-      sel.innerHTML = '<option value="">— เลือกร้าน —</option>' +
-        selectOpts(S.stores, saved.id, (s) => s.id, (s) => (s.code ? s.code + ' · ' : '') + s.name);
-      sel.value = saved.id;
-    } else {
-      closeSheet(true);
-      openSheet(jobFormHtml(null, S.date));
-      setTimeout(() => { const s2 = document.getElementById('jStore'); if (s2) s2.value = saved.id; }, 60);
-    }
-    toast('เพิ่มร้าน ' + name + ' แล้ว', 'ok');
+    // กลับไปฟอร์มงานพร้อมค่าที่กรอกค้างไว้ และเลือกร้านที่เพิ่งเพิ่มให้เลย
+    const draft = Object.assign({}, _jobDraft || {}, { storeId: saved.id });
+    _jobDraft = null;
+    closeSheet(true);
+    openSheet(jobFormHtml(draft, S.date));
+    toast('เพิ่มร้าน ' + name + ' แล้ว เลือกให้เรียบร้อย', 'ok');
     return;
   }
 
@@ -995,6 +1023,13 @@ ACT['photo-add'] = (el) => {
   inp.click();
 };
 
+ACT['photo-pick'] = (el) => {
+  _photoJobId = el.dataset.id;
+  const inp = document.getElementById('photoPick');
+  inp.value = '';
+  inp.click();
+};
+
 async function compressImage(file, maxDim, quality) {
   let bmp = null;
   try {
@@ -1027,26 +1062,30 @@ async function compressImage(file, maxDim, quality) {
   return blob || file;
 }
 
+async function handlePhotoFile(e) {
+  const file = e.target.files && e.target.files[0];
+  if (!file || !_photoJobId) return;
+  const j = jobById(_photoJobId);
+  if (!j) return;
+  toast('กำลังย่อและบันทึกรูป...');
+  try {
+    const blob = await compressImage(file, 1280, 0.72);
+    const rec = await DB.photos.add(blob, { jobId: j.id });
+    await DB.jobs.put(Object.assign({}, j, { photos: (j.photos || []).concat([rec.id]) }));
+    await reload();
+    toast('บันทึกรูปแล้ว (' + byteLabel(blob.size) + ')', 'ok');
+    closeSheet(true);
+    openJob(j.id);
+  } catch (err) {
+    console.error(err);
+    toast('บันทึกรูปไม่ได้ ลองใหม่อีกครั้ง', 'bad');
+  }
+}
+
 document.addEventListener('DOMContentLoaded', () => {
-  const inp = document.getElementById('photoInput');
-  if (inp) inp.addEventListener('change', async (e) => {
-    const file = e.target.files && e.target.files[0];
-    if (!file || !_photoJobId) return;
-    const j = jobById(_photoJobId);
-    if (!j) return;
-    toast('กำลังย่อและบันทึกรูป...');
-    try {
-      const blob = await compressImage(file, 1280, 0.72);
-      const rec = await DB.photos.add(blob, { jobId: j.id });
-      await DB.jobs.put(Object.assign({}, j, { photos: (j.photos || []).concat([rec.id]) }));
-      await reload();
-      toast('บันทึกรูปแล้ว (' + byteLabel(blob.size) + ')', 'ok');
-      closeSheet(true);
-      openJob(j.id);
-    } catch (err) {
-      console.error(err);
-      toast('บันทึกรูปไม่ได้', 'bad');
-    }
+  ['photoInput', 'photoPick'].forEach((id) => {
+    const inp = document.getElementById(id);
+    if (inp) inp.addEventListener('change', handlePhotoFile);
   });
 
   const rin = document.getElementById('restoreInput');

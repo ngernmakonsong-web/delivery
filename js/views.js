@@ -330,7 +330,7 @@ Views.summary = function () {
 
   h += '<div class="sec"><div class="sec-h"><span class="sec-t">เช็คที่รับวันนี้</span></div>';
   if (!m.cheques.length) {
-    h += '<div class="card" style="padding:15px" class="muted"><span class="muted">ยังไม่มีเช็ครับเข้าวันนี้</span></div>';
+    h += '<div class="card" style="padding:15px"><span class="muted">ยังไม่มีเช็ครับเข้าวันนี้</span></div>';
   } else {
     h += '<div class="card" style="padding:13px;margin-bottom:9px">' +
       '<div class="tile-k">รวม ' + m.cheques.length + ' ฉบับ</div>' +
@@ -592,9 +592,11 @@ function jobDetailHtml(j) {
 
   /* ---- รูปถ่าย ---- */
   h += '<div class="sec-h"><span class="sec-t">รูปถ่าย ' + ((j.photos || []).length || '') + '</span></div>' +
-    '<div class="ph-grid" id="phGrid" style="margin-bottom:14px">' +
+    '<div class="ph-grid" id="phGrid" style="margin-bottom:9px">' +
     '<button class="ph-add" type="button" data-act="photo-add" data-id="' + esc(j.id) + '">' +
-    ICO.cam + '<span>ถ่ายรูป</span></button></div>';
+    ICO.cam + '<span>ถ่ายรูป</span></button></div>' +
+    '<button class="btn btn-sm btn-ghost" style="margin-bottom:14px" type="button" data-act="photo-pick" data-id="' + esc(j.id) + '">' +
+    'เลือกรูปจากคลังภาพแทน</button>';
 
   /* ---- ไทม์ไลน์ ---- */
   const ev = (j.events || []).slice().reverse();
@@ -657,7 +659,7 @@ async function renderPhotos(j) {
 }
 
 ACT['job-open'] = (el) => {
-  if (sheetOpen()) { replaceSheet('', null); closeSheet(true); }
+  if (sheetOpen()) closeSheet(true);
   openJob(el.dataset.id);
 };
 ACT['photo-view'] = (el) => {

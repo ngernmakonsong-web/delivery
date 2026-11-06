@@ -136,10 +136,9 @@ function parseLatLng(text) {
   return { lat: lat, lng: lng };
 }
 
-function navUrl(lat, lng, label) {
+function navUrl(lat, lng) {
   if (lat === undefined || lat === null) return null;
-  return 'https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lng +
-         '&travelmode=driving' + (label ? '&destination_place_id=' : '');
+  return 'https://www.google.com/maps/dir/?api=1&destination=' + lat + ',' + lng + '&travelmode=driving';
 }
 
 function telUrl(phone) {
@@ -542,7 +541,7 @@ ACT['date-pick'] = () => {
     '<button class="btn btn-sm" type="button" data-act="date-set" data-d="' + todayISO() + '">วันนี้</button>' +
     '<button class="btn btn-sm" type="button" data-act="date-set" data-d="' + addDays(todayISO(), 1) + '">พรุ่งนี้</button>' +
     '</div>' +
-    '<button class="btn btn-pri btn-block" type="button" data-act="date-apply">ดูวันนี้</button>'
+    '<button class="btn btn-pri btn-block" type="button" data-act="date-apply">ตกลง</button>'
   );
 };
 ACT['date-set'] = (el) => { S.date = el.dataset.d; closeSheet(true); render(); };
@@ -637,7 +636,16 @@ async function boot() {
   gpsStart();
   await render();
 
-  DB.onChange(async () => { await reload(); if (!sheetOpen()) render(); });
+  // รวบการเปลี่ยนแปลงหลายครั้งติด ๆ กันให้วาดใหม่รอบเดียว
+  let chgT = null;
+  DB.onChange(() => {
+    clearTimeout(chgT);
+    chgT = setTimeout(async () => {
+      await reload();
+      if (!sheetOpen()) render();
+      else if (S.screen === 'map' && typeof MapView !== 'undefined') MapView.refresh();
+    }, 90);
+  });
 
   if ('serviceWorker' in navigator) {
     navigator.serviceWorker.register('sw.js').catch(() => {});
