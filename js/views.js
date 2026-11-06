@@ -100,9 +100,9 @@ function jobCard(j, opts) {
         chipStatus(j.status) +
         (CLOSED[j.status] && !(j.photos || []).length ? '<span class="chip st-failed">ไม่มีรูป</span>' : '') +
         (!openable ? '<span class="chip">🔒 ปิดงานแล้ว</span>' : '') +
-        (j.reviewStatus === 'pending' ? '<span class="chip st-enroute">รอตรวจ</span>' : '') +
-        (j.reviewStatus === 'rejected' ? '<span class="chip st-failed">ส่งกลับแก้</span>' : '') +
-        (j.reviewStatus === 'passed' ? '<span class="chip st-done">ตรวจผ่าน</span>' : '') +
+        (reviewOf(j) === 'pending' ? '<span class="chip st-enroute">รอตรวจ</span>' : '') +
+        (reviewOf(j) === 'rejected' ? '<span class="chip st-failed">ส่งกลับแก้</span>' : '') +
+        (reviewOf(j) === 'passed' ? '<span class="chip st-done">ตรวจผ่าน</span>' : '') +
         (j.cod && j.cod.on ? '<span class="job-cod">เก็บเงิน ' + money(j.cod.expected) + '</span>' : '') +
         (drv ? '<span class="chip">' + esc(drv.name) + '</span>' : '') +
         (d !== null ? '<span class="chip">' + distLabel(d) + '</span>' : '') +
@@ -480,7 +480,7 @@ Views.reports = function () {
 
 Views.review = function () {
   const pending = jobsAwaitingReview();
-  const recent = S.jobs.filter((j) => j.reviewStatus === 'passed' || j.reviewStatus === 'rejected')
+  const recent = S.jobs.filter((j) => reviewOf(j) === 'passed' || j.reviewStatus === 'rejected')
     .sort((a, b) => String(b.reviewedAt || '').localeCompare(String(a.reviewedAt || '')))
     .slice(0, 15);
 
@@ -488,7 +488,7 @@ Views.review = function () {
 
   h += '<div class="sec"><div class="tiles tiles-3">' +
     tile('รอตรวจ', pending.length, 'งาน', pending.length ? 'warn' : '') +
-    tile('ผ่านแล้ว', S.jobs.filter((j) => j.reviewStatus === 'passed').length, '', 'ok') +
+    tile('ผ่านแล้ว', S.jobs.filter((j) => reviewOf(j) === 'passed').length, '', 'ok') +
     tile('ส่งกลับแก้', S.jobs.filter((j) => j.reviewStatus === 'rejected').length, '',
       S.jobs.filter((j) => j.reviewStatus === 'rejected').length ? 'bad' : '') +
     '</div></div>';
@@ -514,7 +514,7 @@ function reviewRow(j, isPending) {
   const st = storeById(j.storeId);
   const drv = driverById(j.driverId);
   const t = TY[j.type] || TY.deliver;
-  const rv = REV[j.reviewStatus] || REV.none;
+  const rv = REV[reviewOf(j)] || REV.none;
   const nPhoto = (j.photos || []).length;
   const by = j.reviewedBy ? driverById(j.reviewedBy) : null;
 
@@ -708,11 +708,12 @@ function jobDetailHtml(j) {
   }
 
   /* ---- การตรวจงาน ---- */
-  if (j.reviewStatus && j.reviewStatus !== 'none') {
-    const rv = REV[j.reviewStatus] || REV.none;
+  const rvState = reviewOf(j);
+  if (rvState !== 'none') {
+    const rv = REV[rvState] || REV.none;
     const by = j.reviewedBy ? driverById(j.reviewedBy) : null;
 
-    if (j.reviewStatus === 'pending') {
+    if (rvState === 'pending') {
       if (canSeeOffice()) {
         h += '<div class="card" style="padding:13px;margin-bottom:13px;border:2px solid var(--s-enroute)">' +
           '<div style="font-weight:700;font-size:15px;margin-bottom:3px">งานนี้รอคุณตรวจ</div>' +
@@ -729,8 +730,8 @@ function jobDetailHtml(j) {
           '<div><b>ส่งงานแล้ว รอหัวหน้าตรวจ</b><br>ถ้าตรวจไม่ผ่าน งานจะกลับมาให้คุณแก้อีกครั้ง</div></div>';
       }
     } else {
-      h += '<div class="note' + (j.reviewStatus === 'passed' ? ' info' : '') + '" style="margin-bottom:13px">' +
-        '<span class="ni">' + (j.reviewStatus === 'passed' ? '✅' : '↩️') + '</span><div>' +
+      h += '<div class="note' + (rvState === 'passed' ? ' info' : '') + '" style="margin-bottom:13px">' +
+        '<span class="ni">' + (rvState === 'passed' ? '✅' : '↩️') + '</span><div>' +
         '<b>' + rv.label + '</b>' + (by ? ' โดย ' + esc(by.name) : '') +
         (j.reviewedAt ? ' · ' + thDate(j.reviewedAt.slice(0, 10)) + ' ' + clockOf(j.reviewedAt) : '') +
         (j.reviewNote ? '<br>"' + esc(j.reviewNote) + '"' : '') +

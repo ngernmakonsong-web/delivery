@@ -87,9 +87,21 @@ const REV = {
   rejected: { label: 'ตรวจไม่ผ่าน',   cls: 'st-failed'  }
 };
 
+/** สถานะตรวจที่ใช้จริง
+ *  งานที่ปิดแล้วแต่ยังไม่มีค่า (ปิดไปก่อนมีระบบตรวจ) นับเป็น "รอตรวจ"
+ *  เพื่อไม่ให้มีงานไหนหลุดการตรวจไปเงียบ ๆ */
+function reviewOf(j) {
+  if (!CLOSED[j.status]) return 'none';
+  const r = j.reviewStatus;
+  if (!r || r === 'none') return 'pending';
+  return r;
+}
+
+function needsReview(j) { return reviewOf(j) === 'pending'; }
+
 /** งานที่รอหัวหน้าตรวจ */
 function jobsAwaitingReview() {
-  return S.jobs.filter((j) => j.reviewStatus === 'pending')
+  return S.jobs.filter(needsReview)
     .sort((a, b) => String(b.closedAt || b.date).localeCompare(String(a.closedAt || a.date)));
 }
 

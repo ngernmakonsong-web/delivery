@@ -568,12 +568,12 @@ function photoGateHtml(j, title) {
 
 function hasPhoto(j) { return ((j && j.photos) || []).length > 0; }
 
-/** ปิดงานแล้วเข้าสถานะตรวจอะไร
- *  คนขับปิด -> รอหัวหน้าตรวจ
- *  หัวหน้าปิดเอง -> ถือว่าตรวจผ่านแล้วในตัว ไม่ต้องตรวจซ้ำ */
+/** ปิดงานแล้วต้องรอตรวจเสมอ ไม่ว่าใครเป็นคนปิด
+ *  รวมถึงหัวหน้าปิดเอง ก็ยังต้องมีคนกดตรวจผ่านอยู่ดี
+ *  เพื่อให้ทุกงานผ่านสายตาคนตรวจจริง ๆ ไม่มีงานไหนผ่านไปเอง */
 function reviewStateOnClose() {
   if (!S.cloud) return 'none';
-  return canSeeOffice() ? 'passed' : 'pending';
+  return 'pending';
 }
 
 ACT['close-ok'] = (el) => {
@@ -674,8 +674,8 @@ ACT['close-ok-save'] = async (el) => {
     events: await pushEvent(j, 'done'),
     fail: undefined,
     reviewStatus: reviewStateOnClose(),
-    reviewedBy: canSeeOffice() ? S.myDriverId : undefined,
-    reviewedAt: canSeeOffice() ? new Date().toISOString() : undefined,
+    reviewedBy: undefined,
+    reviewedAt: undefined,
     reviewNote: ''
   });
 
@@ -798,8 +798,8 @@ ACT['close-fail-save'] = async (el) => {
     fail: { reason: reason, note: val('fNote'), at: new Date().toISOString() },
     rescheduledTo: resch || undefined,
     reviewStatus: reviewStateOnClose(),
-    reviewedBy: canSeeOffice() ? S.myDriverId : undefined,
-    reviewedAt: canSeeOffice() ? new Date().toISOString() : undefined,
+    reviewedBy: undefined,
+    reviewedAt: undefined,
     reviewNote: ''
   });
 
