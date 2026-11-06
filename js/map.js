@@ -109,7 +109,7 @@ const MapView = (function () {
       }
     }
 
-    if (!didFit && pts.length) { fit(); didFit = true; }
+    if (!didFit) { fit(); didFit = true; }
     return pts;
   }
 
@@ -123,11 +123,37 @@ const MapView = (function () {
     return pts;
   }
 
-  function fit() {
+  /** ทุกจุดที่ปักหมุดไว้ รวมร้านที่ไม่มีงานวันนี้ */
+  function everyPinnedPoint() {
     const pts = allPoints();
-    if (!map || !pts.length) return;
-    if (pts.length === 1) { map.setView(pts[0], 15); return; }
-    try { map.fitBounds(L.latLngBounds(pts).pad(0.18)); } catch (e) {}
+    S.stores.forEach((st) => {
+      if (st.lat === undefined || st.lat === null) return;
+      pts.push([st.lat, st.lng]);
+    });
+    return pts;
+  }
+
+  /** จุดต่างกันจริงกี่จุด (ร้านเดียวกันหลายงานนับเป็นจุดเดียว) */
+  function distinctCount(pts) {
+    const seen = {};
+    pts.forEach((p) => { seen[p[0].toFixed(4) + ',' + p[1].toFixed(4)] = 1; });
+    return Object.keys(seen).length;
+  }
+
+  function fit() {
+    if (!map) return;
+    let pts = allPoints();
+    // ถ้างานวันนี้กระจุกอยู่จุดเดียว ให้ขยายไปดูร้านทั้งหมดแทน จะได้เห็นภาพรวม
+    if (distinctCount(pts) < 2) pts = everyPinnedPoint();
+    if (!pts.length) return;
+
+    if (distinctCount(pts) < 2) {
+      map.setView(pts[0], 16);     // จุดเดียวจริง ๆ อย่าซูมจนสุด
+      return;
+    }
+    try {
+      map.fitBounds(L.latLngBounds(pts).pad(0.2), { maxZoom: 16 });
+    } catch (e) {}
   }
 
   function showCard(j) {
@@ -320,7 +346,8 @@ const MapView = (function () {
       return;
     }
 
-    const center = S.pos ? [S.pos.lat, S.pos.lng] : (allPoints()[0] || DEFAULT_CENTER);
+    const center = S.pos ? [S.pos.lat, S.pos.lng]
+      : (allPoints()[0] || everyPinnedPoint()[0] || DEFAULT_CENTER);
     map = L.map(el, { zoomControl: false, attributionControl: true })
       .setView(center, S.pos ? 14 : DEFAULT_ZOOM);
 
